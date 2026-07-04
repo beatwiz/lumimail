@@ -1,7 +1,7 @@
 # Staging on Cloudflare Workers Builds
 
 This repo ships a **persistent staging worker** that deploys automatically on
-every push to `main`. The Cloudflare dashboard handles the Git integration;
+every push to `staging`. The Cloudflare dashboard handles the Git integration;
 the repo is set up so that connection "just works" once the one-time resources
 below are created.
 
@@ -17,7 +17,7 @@ below are created.
   destroy demo data.
 - Demo login: `admin@example.com` / `demo-password-change-me` (seeded on every
   deploy, idempotent — safe to redeploy).
-- Push to `main` → `npm run typecheck` → remote D1 migrations → OpenNext
+- Push to `staging` → `npm run typecheck` → remote D1 migrations → OpenNext
   build → deploy → seed. No manual steps.
 
 ## One-time setup
@@ -63,9 +63,19 @@ pipeline reads this exact value.
 
 1. Workers & Pages → **Create application** → Workers → **Connect to Git**.
 2. Select this repo (`cschanhniem/lumimail`).
-3. **Production branch:** `main`.
-4. **Build command:** `npm run deploy:staging`
-   (which does typecheck → D1 migrate → OpenNext build → deploy → seed).
+3. **Production branch:** `staging`.
+4. Set **both** build commands explicitly:
+   - **Build command:** `npm run deploy:staging`
+     (does typecheck → D1 migrate → OpenNext build → `wrangler deploy` → seed).
+   - **Deploy command:** `echo skip`
+     (the build command already deploys via `opennextjs-cloudflare deploy`;
+     the deploy command is a no-op).
+
+   > **Never leave the Deploy command at its default (`npx wrangler deploy`).**
+   > Cloudflare's default generates a minimal `wrangler.jsonc` with no `main`
+   > entry point and no `assets` directory, so the deploy fails with
+   > `Missing entry-point to Worker script or to assets directory`. Always set
+   > Build = `npm run deploy:staging` and Deploy = `echo skip`.
 5. **Build environment variables** (first deploy):
    - `STAGING_URL` — **leave empty on the very first push**; we learn it
      from the deploy output and paste it back in step 6.b below.
@@ -101,7 +111,7 @@ missing var, fix the env var and re-push — that is exactly the
 
 ### Optional — preview versions per PR
 
-Cloudflare can spin up a preview worker per non-`main` branch. Toggle the
+Cloudflare can spin up a preview worker per non-`staging` branch. Toggle the
 "Preview deployments" switch in the project's **Settings → Builds** tab.
 The owner decides whether this is wanted — staging above works either way.
 
