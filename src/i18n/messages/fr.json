@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "Destinataires, ou \"Marie Dupont\" <marie@exemple.com>",
     "savedToDrafts": "Enregistré dans les brouillons",
     "autosaveDraft": "Sauvegarde automatique comme brouillon",
+    "send": "Envoyer",
+    "sending": "Envoi...",
     "sendSuccess": "Message envoyé",
     "sendFailed": "Échec d'envoi",
     "draftLoadFailed": "Échec du chargement du brouillon"

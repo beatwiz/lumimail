@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "প্রাপক, অথবা \"রহিম উদ্দিন\" <rahim@example.com>",
     "savedToDrafts": "খসড়ায় সংরক্ষিত",
     "autosaveDraft": "খসড়া স্বয়ংক্রিয়ভাবে সংরক্ষণ",
+    "send": "পাঠান",
+    "sending": "পাঠানো হচ্ছে...",
     "sendSuccess": "বার্তা পাঠানো হয়েছে",
     "sendFailed": "পাঠাতে ব্যর্থ",
     "draftLoadFailed": "খসড়া লোড করতে ব্যর্থ"

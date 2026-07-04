@@ -17,8 +17,8 @@ export function BulkMessageToolbar({
 	const t = useTranslations("actions");
 	const tm = useTranslations("messages");
 	return (
-		<div className="flex min-w-0 items-center gap-2 text-neutral-600 w-full">
-			<span className="mr-2 text-sm font-medium text-neutral-800">{tm("selected", { count: selectedCount })}</span>
+		<div className="flex min-w-0 items-center gap-2 text-[var(--ink-muted)] w-full">
+			<span className="mr-2 text-sm font-medium text-[var(--ink)]">{tm("selected", { count: selectedCount })}</span>
 			<Tooltip label={t("archive")}>
 				<Button variant="ghost" size="sm" onClick={() => onAction("archive")} disabled={pending} aria-label={t("archive")}>
 					<Archive className="h-4 w-4" />
@@ -46,9 +46,9 @@ export function BulkMessageToolbar({
 				</Button>
 			</Tooltip>
 			<Tooltip label={t("moveMessage")}>
-				<span className="rounded-lg border border-neutral-200 px-2">
+				<span className="rounded-lg border border-[var(--border)] px-2">
 					<select
-						className="bg-white text-xs font-medium pb-1 text-neutral-700 outline-none pr-2"
+						className="bg-[var(--surface-raised)] text-xs font-medium pb-1 text-[var(--ink)] outline-none pr-2"
 						disabled={pending}
 						defaultValue=""
 						aria-label={t("moveMessage")}

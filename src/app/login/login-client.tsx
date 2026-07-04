@@ -68,7 +68,7 @@ export function LoginClient() {
           />
         </div>
         {error && (
-          <p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          <p className="rounded-2xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-3 text-sm font-medium text-[var(--danger)]">
             {error}
           </p>
         )}

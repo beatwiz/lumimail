@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "Người nhận, hoặc \"Nguyễn Văn A\" <nguyenvana@vidu.com>",
     "savedToDrafts": "Đã lưu vào thư nháp",
     "autosaveDraft": "Tự động lưu nháp",
+    "send": "Gửi",
+    "sending": "Đang gửi...",
     "sendSuccess": "Đã gửi tin nhắn",
     "sendFailed": "Gửi thất bại",
     "draftLoadFailed": "Không thể tải nháp"

@@ -120,14 +120,14 @@ export function RegisterClient() {
       }
     >
       {loadingInvite ? (
-        <p className="text-sm text-neutral-500">{t("loading")}</p>
+        <p className="text-sm text-[var(--ink-muted)]">{t("loading")}</p>
       ) : invite ? (
-        <div className="mb-4 rounded-2xl border border-blue-100 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+        <div className="mb-4 rounded-2xl border border-[var(--accent)]/30 bg-[var(--accent-muted)] px-4 py-3 text-sm text-[var(--accent)]">
           {t("invitedBy", { orgName: invite.orgName })}
         </div>
       ) : null}
       {error && (
-        <p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+        <p className="rounded-2xl border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-3 text-sm font-medium text-[var(--danger)]">
           {error}
         </p>
       )}
@@ -136,7 +136,7 @@ export function RegisterClient() {
           <div className="space-y-2">
             <Label htmlFor="domain">{t("primaryDomain")}</Label>
             <Input id="domain" name="domain" placeholder="example.com" autoComplete="url" required />
-            <p className="text-xs leading-5 text-neutral-500">{t("domainHelper")}</p>
+            <p className="text-xs leading-5 text-[var(--ink-muted)]">{t("domainHelper")}</p>
           </div>
           <Button type="submit" className="h-11 w-full rounded-full px-6 active:scale-[0.98]" disabled={loading}>
             {loading ? t("addingDomain") : t("continue")}
@@ -155,7 +155,7 @@ export function RegisterClient() {
                 required
                 className="pr-34"
               />
-              <span className="absolute right-5 top-2.5 max-w-36 truncate text-sm font-medium text-neutral-500">
+              <span className="absolute right-5 top-2.5 max-w-36 truncate text-sm font-medium text-[var(--ink-muted)]">
                 @{accountDomain ?? t("placeholders.domain")}
               </span>
             </div>

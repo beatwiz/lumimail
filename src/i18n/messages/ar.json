@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "المستلمون، أو \"أحمد\" <ahmed@example.com>",
     "savedToDrafts": "محفوظ في المسودات",
     "autosaveDraft": "حفظ تلقائي كمسودة",
+    "send": "إرسال",
+    "sending": "جارٍ الإرسال...",
     "sendSuccess": "تم إرسال الرسالة",
     "sendFailed": "فشل الإرسال",
     "draftLoadFailed": "فشل تحميل المسودة"

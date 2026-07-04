@@ -51,8 +51,8 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 	const markAction: BulkMessageAction = read ? "unread" : "read";
 
 	return (
-		<div className="flex items-center gap-3 text-neutral-600">
-			{error && <span className="text-xs text-red-600">{error}</span>}
+		<div className="flex items-center gap-3 text-[var(--ink-muted)]">
+			{error && <span className="text-xs text-[var(--danger)]">{error}</span>}
 			<div className="flex items-center gap-2">
 				<Tooltip label={t("reply")}>
 					<Button type="button" variant="ghost" size="sm" aria-label={t("reply")} onClick={replyTo}>
@@ -110,7 +110,7 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 				</Tooltip>
 				<Tooltip label={t("moveMessage")}>
 					<select
-						className="h-8 rounded-lg border border-neutral-200 bg-white px-2 text-xs text-neutral-700"
+						className="h-8 rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-2 text-xs text-[var(--ink)]"
 						disabled={disabled}
 						defaultValue=""
 						aria-label={t("moveMessage")}
@@ -126,7 +126,7 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 					</select>
 				</Tooltip>
 				<Tooltip label={t("moreActions")}>
-					<span aria-label={t("moreActions")} className="rounded-full p-1 text-neutral-400">
+					<span aria-label={t("moreActions")} className="rounded-full p-1 text-[var(--ink-faint)]">
 						<MoreVertical className="h-5 w-5" />
 					</span>
 				</Tooltip>

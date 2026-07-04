@@ -56,6 +56,7 @@
 body {
 	background: var(--surface);
 	color: var(--ink);
+	color-scheme: light dark;
 	font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI",
 		Roboto, sans-serif;
 	line-height: 1.6;
@@ -101,8 +102,16 @@ body {
 	border-radius: 6px;
 	border: 1px solid var(--border-strong);
 	background: var(--surface-raised);
+	color: var(--ink);
 	padding-left: 12px;
 	padding-right: 12px;
+}
+
+input,
+textarea,
+select {
+	color: var(--ink);
+	background-color: var(--surface-raised);
 }
 
 [data-slot="input"]::placeholder {

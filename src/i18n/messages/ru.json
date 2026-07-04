@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "Получатели, или \"Иван Петров\" <ivan@example.com>",
     "savedToDrafts": "Сохранено в черновики",
     "autosaveDraft": "Автосохранение черновика",
+    "send": "Отправить",
+    "sending": "Отправка...",
     "sendSuccess": "Сообщение отправлено",
     "sendFailed": "Ошибка отправки",
     "draftLoadFailed": "Ошибка загрузки черновика"

@@ -57,10 +57,10 @@ export default function MailboxSettingsPage() {
 
 			<div className="flex items-start justify-between gap-4">
 				<div className="min-w-0">
-					<h1 className="truncate text-2xl font-semibold text-neutral-900">
+					<h1 className="truncate text-2xl font-semibold text-[var(--ink)]">
 						{mailbox.data?.displayName || mailbox.data?.localPart || "Mailbox"}
 					</h1>
-					<p className="mt-1 truncate font-mono text-sm text-neutral-500">
+					<p className="mt-1 truncate font-mono text-sm text-[var(--ink-muted)]">
 						{address || "Loading mailbox..."}
 					</p>
 				</div>
@@ -68,7 +68,7 @@ export default function MailboxSettingsPage() {
 			</div>
 
 			{mailbox.isError && (
-				<p className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+				<p className="rounded-lg border border-[var(--danger)]/30 bg-[var(--danger)]/10 px-4 py-3 text-sm text-[var(--danger)]">
 					{mailbox.error instanceof Error ? mailbox.error.message : "Failed to load mailbox"}
 				</p>
 			)}
@@ -92,14 +92,14 @@ export default function MailboxSettingsPage() {
 						/>
 					</div>
 					{updateName.isError && (
-						<p className="text-sm text-red-600">
+						<p className="text-sm text-[var(--danger)]">
 							{updateName.error instanceof Error
 								? updateName.error.message
 								: "Failed to update mailbox"}
 						</p>
 					)}
 					{updateName.isSuccess && (
-						<p className="text-sm text-green-700">Mailbox settings saved</p>
+						<p className="text-sm text-[var(--success)]">Mailbox settings saved</p>
 					)}
 					<Button
 						onClick={() => updateName.mutate()}
@@ -120,25 +120,25 @@ export default function MailboxSettingsPage() {
 				</CardHeader>
 				<CardContent className="grid gap-4 sm:grid-cols-2">
 					<div className="space-y-1">
-						<p className="text-xs font-medium uppercase tracking-wide text-neutral-500">Email</p>
-						<p className="truncate font-mono text-sm text-neutral-900">{address || "-"}</p>
+						<p className="text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">Email</p>
+						<p className="truncate font-mono text-sm text-[var(--ink)]">{address || "-"}</p>
 					</div>
 					<div className="space-y-1">
-						<p className="text-xs font-medium uppercase tracking-wide text-neutral-500">Username</p>
-						<p className="truncate font-mono text-sm text-neutral-900">
+						<p className="text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">Username</p>
+						<p className="truncate font-mono text-sm text-[var(--ink)]">
 							{mailbox.data?.localPart ?? "-"}
 						</p>
 					</div>
 					<div className="space-y-1">
-						<p className="text-xs font-medium uppercase tracking-wide text-neutral-500">Domain</p>
-						<p className="truncate font-mono text-sm text-neutral-900">
+						<p className="text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">Domain</p>
+						<p className="truncate font-mono text-sm text-[var(--ink)]">
 							{mailbox.data?.hostname ?? "-"}
 						</p>
 					</div>
 					<div className="space-y-1">
-						<p className="text-xs font-medium uppercase tracking-wide text-neutral-500">Routing</p>
-						<p className="flex items-center gap-2 text-sm text-neutral-900">
-							<Mail className="h-4 w-4 text-neutral-400" />
+						<p className="text-xs font-medium uppercase tracking-wide text-[var(--ink-muted)]">Routing</p>
+						<p className="flex items-center gap-2 text-sm text-[var(--ink)]">
+							<Mail className="h-4 w-4 text-[var(--ink-faint)]" />
 							Cloudflare Email Routing
 						</p>
 					</div>
