@@ -62,7 +62,7 @@ pipeline reads this exact value.
 ### 5. Connect the repo to Cloudflare from the dashboard
 
 1. Workers & Pages → **Create application** → Workers → **Connect to Git**.
-2. Select this repo (`cschanhniem/lumimail`).
+2. Select this repo (`beatwiz/lumimail`).
 3. **Production branch:** `staging`.
 4. Set **both** build commands explicitly:
    - **Build command:** `npm run deploy:staging`
