@@ -83,7 +83,7 @@ export default function MailboxesPage() {
 							<div className="space-y-2">
 								<Label>Domain</Label>
 								<select
-									className="w-full h-10 rounded-md border border-neutral-200 px-3 text-sm shadow-sm shadow-neutral-200/50 placeholder:text-neutral-500 focus-visible:outline-none focus-visible:border-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
+									className="w-full h-10 rounded-md border border-[var(--border)] px-3 text-sm shadow-sm placeholder:text-[var(--ink-faint)] focus-visible:outline-none focus-visible:border-[var(--accent)] disabled:cursor-not-allowed disabled:opacity-50"
 									value={domainId}
 									onChange={(event) => setDomainId(event.target.value)}
 								>
@@ -103,13 +103,13 @@ export default function MailboxesPage() {
 									placeholder="support"
 								/>
 								{domainId && (
-									<span className="absolute bottom-2.5 right-4 text-sm text-neutral-400">
+									<span className="absolute bottom-2.5 right-4 text-sm text-[var(--ink-faint)]">
 										@{domainMap.get(domainId)}
 									</span>
 								)}
 							</div>
 							{create.isError && (
-								<p className="text-sm text-red-600">{(create.error as Error).message}</p>
+								<p className="text-sm text-[var(--danger)]">{(create.error as Error).message}</p>
 							)}
 							<Button
 								onClick={() => create.mutate()}
@@ -123,17 +123,17 @@ export default function MailboxesPage() {
 			</div>
 			<section className="space-y-3">
 				{/* <div className="flex items-center justify-between">
-					<span className="text-sm text-neutral-500">
+					<span className="text-sm text-[var(--ink-muted)]">
 						{(mailboxes.data?.mailboxes ?? []).length} total
 					</span>
 				</div> */}
 				{mailboxes.isLoading && (
-					<p className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-500">
+					<p className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-4 py-3 text-sm text-[var(--ink-muted)]">
 						Loading mailboxes...
 					</p>
 				)}
 				{!mailboxes.isLoading && (mailboxes.data?.mailboxes ?? []).length === 0 && (
-					<p className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-500">
+					<p className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-4 py-3 text-sm text-[var(--ink-muted)]">
 						No mailboxes yet
 					</p>
 				)}
@@ -148,16 +148,16 @@ export default function MailboxesPage() {
 							<Link
 								key={mailbox.id}
 								href={`/mailboxes/${mailbox.id}`}
-								className="group flex min-h-24 items-start gap-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm shadow-neutral-100 transition hover:border-blue-200 hover:bg-[#f8fbff] hover:shadow-md"
+								className="group flex min-h-24 items-start gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] p-4 shadow-sm transition hover:border-[var(--accent)] hover:bg-[var(--accent-muted)] hover:shadow-md"
 							>
-								<span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600 group-hover:bg-blue-50 group-hover:text-blue-700">
+								<span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-subtle)] text-[var(--ink-muted)] group-hover:bg-[var(--accent-muted)] group-hover:text-[var(--accent)]">
 									<Mail className="h-5 w-5" />
 								</span>
 								<span className="min-w-0 space-y-1">
-									<span className="block truncate text-sm font-semibold text-neutral-900">
+									<span className="block truncate text-sm font-semibold text-[var(--ink)]">
 										{getMailboxName(mailboxWithHostname)}
 									</span>
-									<span className="block truncate font-mono text-sm text-neutral-500">
+									<span className="block truncate font-mono text-sm text-[var(--ink-muted)]">
 										{getMailboxAddress(mailboxWithHostname)}
 									</span>
 								</span>

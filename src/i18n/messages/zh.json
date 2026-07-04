@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "收件人，或 \"张三\" <zhangsan@example.com>",
     "savedToDrafts": "已保存到草稿",
     "autosaveDraft": "自动保存草稿",
+    "send": "发送",
+    "sending": "发送中...",
     "sendSuccess": "邮件已发送",
     "sendFailed": "发送失败",
     "draftLoadFailed": "加载草稿失败"

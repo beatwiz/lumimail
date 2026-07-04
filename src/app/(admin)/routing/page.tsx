@@ -95,7 +95,7 @@ export default function RoutingPage() {
 	return (
 		<div className="space-y-6 max-w-2xl">
 			<h1 className="text-2xl font-semibold">Routing rules</h1>
-			<p className="text-sm text-neutral-500">
+			<p className="text-sm text-[var(--ink-muted)]">
 				Rules are evaluated in priority order. Incoming email for a domain is matched against each rule&apos;s pattern.
 			</p>
 
@@ -108,7 +108,7 @@ export default function RoutingPage() {
 						<div className="space-y-2">
 							<Label>Domain</Label>
 							<select
-								className="w-full h-10 rounded-md border border-neutral-200 px-3 text-sm"
+								className="w-full h-10 rounded-md border border-[var(--border)] px-3 text-sm"
 								value={domainId}
 								onChange={(e) => setDomainId(e.target.value)}
 							>
@@ -131,7 +131,7 @@ export default function RoutingPage() {
 						<div className="space-y-2">
 							<Label>Action</Label>
 							<select
-								className="w-full h-10 rounded-md border border-neutral-200 px-3 text-sm"
+								className="w-full h-10 rounded-md border border-[var(--border)] px-3 text-sm"
 								value={action}
 								onChange={(e) => setAction(e.target.value as "store" | "forward" | "reject")}
 							>
@@ -154,7 +154,7 @@ export default function RoutingPage() {
 						<div className="space-y-2">
 							<Label>Target mailbox</Label>
 							<select
-								className="w-full h-10 rounded-md border border-neutral-200 px-3 text-sm"
+								className="w-full h-10 rounded-md border border-[var(--border)] px-3 text-sm"
 								value={mailboxId}
 								onChange={(e) => setMailboxId(e.target.value)}
 							>
@@ -188,7 +188,7 @@ export default function RoutingPage() {
 						Add rule
 					</Button>
 					{create.isError && (
-						<p className="text-sm text-red-600">Failed to create rule</p>
+						<p className="text-sm text-[var(--danger)]">Failed to create rule</p>
 					)}
 				</CardContent>
 			</Card>
@@ -199,22 +199,22 @@ export default function RoutingPage() {
 				</CardHeader>
 				<CardContent>
 					{(rules.data?.rules ?? []).length === 0 ? (
-						<p className="text-sm text-neutral-400">No routing rules yet.</p>
+						<p className="text-sm text-[var(--ink-faint)]">No routing rules yet.</p>
 					) : (
-						<ul className="divide-y divide-neutral-100">
+						<ul className="divide-y divide-[var(--border)]">
 							{(rules.data?.rules ?? [])
 								.sort((a, b) => a.priority - b.priority)
 								.map((r) => (
 									<li key={r.id} className="flex items-center justify-between py-3">
 										<div className="flex items-center gap-3 text-sm">
-											<GitBranch className="h-4 w-4 text-neutral-400" />
+											<GitBranch className="h-4 w-4 text-[var(--ink-faint)]" />
 											<div>
 												<div className="font-medium">
 													<span className="font-mono">{r.pattern}</span>
 													{" "}on{" "}
 													<span className="font-mono">{domainHostname(r.domainId)}</span>
 												</div>
-												<div className="text-xs text-neutral-500">
+												<div className="text-xs text-[var(--ink-muted)]">
 													{actionLabel(r)} · priority {r.priority}
 												</div>
 											</div>
@@ -223,7 +223,7 @@ export default function RoutingPage() {
 											variant="ghost"
 											size="sm"
 											onClick={() => remove.mutate(r.id)}
-											className="text-red-500 hover:text-red-700"
+											className="text-[var(--danger)] hover:opacity-80"
 										>
 											<Trash2 className="h-4 w-4" />
 										</Button>

@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "宛先、例：\"山田 太郎\" <taro@example.com>",
     "savedToDrafts": "下書きに保存",
     "autosaveDraft": "下書き自動保存",
+    "send": "送信",
+    "sending": "送信中...",
     "sendSuccess": "メッセージを送信しました",
     "sendFailed": "送信失敗",
     "draftLoadFailed": "下書きの読み込みに失敗"

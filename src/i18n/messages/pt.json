@@ -140,6 +140,8 @@
     "recipientsPlaceholder": "Destinatários, ou \"Maria Silva\" <maria@exemplo.com>",
     "savedToDrafts": "Salvo nos rascunhos",
     "autosaveDraft": "Salva automaticamente como rascunho",
+    "send": "Enviar",
+    "sending": "A enviar...",
     "sendSuccess": "Mensagem enviada",
     "sendFailed": "Falha ao enviar",
     "draftLoadFailed": "Falha ao carregar rascunho"

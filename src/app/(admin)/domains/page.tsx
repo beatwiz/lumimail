@@ -88,7 +88,7 @@ export default function DomainsPage() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Domains</h1>
-          <p className="mt-1 text-sm text-neutral-500">
+          <p className="mt-1 text-sm text-[var(--ink-muted)]">
             Domains must be on your Cloudflare account. Adding a domain enables
             Email Routing and Email Sending DNS automatically.
           </p>
@@ -119,7 +119,7 @@ export default function DomainsPage() {
                 />
               </div>
               {create.isError && (
-                <p className="text-sm text-red-600">
+                <p className="text-sm text-[var(--danger)]">
                   {(create.error as Error).message}
                 </p>
               )}
@@ -135,12 +135,12 @@ export default function DomainsPage() {
       </div>
       <section className="space-y-3">
         {isLoading && (
-          <p className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-500">
+          <p className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-4 py-3 text-sm text-[var(--ink-muted)]">
             Loading DNS status...
           </p>
         )}
         {!isLoading && (data?.domains ?? []).length === 0 && (
-          <p className="rounded-lg border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-500">
+          <p className="rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] px-4 py-3 text-sm text-[var(--ink-muted)]">
             No domains yet
           </p>
         )}
@@ -150,14 +150,14 @@ export default function DomainsPage() {
             return (
               <div
                 key={d.id}
-                className="flex min-h-36 flex-col gap-3 rounded-lg border border-neutral-200 bg-white p-4 shadow-sm shadow-neutral-100"
+                className="flex min-h-36 flex-col gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-raised)] p-4 shadow-sm"
               >
                 <div className="flex items-start gap-3">
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-neutral-100 text-neutral-600">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-subtle)] text-[var(--ink-muted)]">
                     <Globe2 className="h-5 w-5" />
                   </span>
                   <div className="min-w-0 flex-1">
-                    <span className="block truncate font-mono text-sm font-semibold text-neutral-900">
+                    <span className="block truncate font-mono text-sm font-semibold text-[var(--ink)]">
                       {d.hostname}
                     </span>
                     <div className="mt-2 flex flex-wrap gap-2">
@@ -197,37 +197,37 @@ export default function DomainsPage() {
                 </div>
                 {dns && (
                   <div className="flex flex-wrap items-center gap-3 text-xs">
-                    <span className="flex items-center gap-1 text-neutral-500">
+                    <span className="flex items-center gap-1 text-[var(--ink-muted)]">
                       Routing{" "}
                       {dns.routing.configured ? (
-                        <Check className="h-3.5 w-3.5 text-green-600" />
+                        <Check className="h-3.5 w-3.5 text-[var(--success)]" />
                       ) : (
                         <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                       )}
                     </span>
                     {dns.routing.missing.length > 0 && (
-                      <span className="text-red-600 flex items-center gap-1">
+                      <span className="text-[var(--danger)] flex items-center gap-1">
                         <X className="h-3 w-3" />
                         Missing: {dns.routing.missing.join(", ")}
                       </span>
                     )}
-                    <span className="text-neutral-300">|</span>
-                    <span className="flex items-center gap-1 text-neutral-500">
+                    <span className="text-[var(--ink-faint)]">|</span>
+                    <span className="flex items-center gap-1 text-[var(--ink-muted)]">
                       Sending{" "}
                       {dns.sending.configured ? (
-                        <Check className="h-3.5 w-3.5 text-green-600" />
+                        <Check className="h-3.5 w-3.5 text-[var(--success)]" />
                       ) : (
                         <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
                       )}
                     </span>
                     {dns.sending.records.length > 0 && (
-                      <span className="text-neutral-500">
+                      <span className="text-[var(--ink-muted)]">
                         {dns.sending.records.join(", ")}
                       </span>
                     )}
                     <button
                       onClick={() => loadDns(d.id)}
-                      className="flex items-center gap-0.5 text-blue-600 hover:text-blue-800"
+                      className="flex items-center gap-0.5 text-[var(--accent)] hover:opacity-80"
                     >
                       <ArrowRight className="h-3 w-3" />
                       details
@@ -249,7 +249,7 @@ export default function DomainsPage() {
               <p className="font-sans font-medium text-sm mb-2">
                 Email Routing
               </p>
-              <pre className="overflow-auto bg-neutral-50 dark:bg-neutral-900 p-3 rounded-md">
+              <pre className="overflow-auto bg-[var(--surface-subtle)] p-3 rounded-md">
                 {JSON.stringify(
                   (dnsView.dns as { routing: unknown }).routing,
                   null,
@@ -261,7 +261,7 @@ export default function DomainsPage() {
               <p className="font-sans font-medium text-sm mb-2">
                 Email Sending
               </p>
-              <pre className="overflow-auto bg-neutral-50 dark:bg-neutral-900 p-3 rounded-md">
+              <pre className="overflow-auto bg-[var(--surface-subtle)] p-3 rounded-md">
                 {JSON.stringify(
                   (dnsView.dns as { sending: DnsRecord[] }).sending,
                   null,

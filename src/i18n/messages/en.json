@@ -144,6 +144,8 @@
     "recipientsPlaceholder": "Recipients, or \"Maya Chen\" <maya@example.com>",
     "savedToDrafts": "Saved to drafts",
     "autosaveDraft": "Autosaves as draft",
+    "send": "Send",
+    "sending": "Sending...",
     "sendSuccess": "Message sent",
     "sendFailed": "Send failed",
     "draftLoadFailed": "Failed to load draft"
