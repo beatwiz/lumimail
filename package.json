@@ -19,6 +19,9 @@
     "deploy": "npm run db:migrate:remote && opennextjs-cloudflare build && opennextjs-cloudflare deploy",
     "upload": "opennextjs-cloudflare build && opennextjs-cloudflare upload",
     "preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "deploy:staging": "npm run typecheck && npm run db:migrate:staging && opennextjs-cloudflare build --config wrangler.staging.jsonc && opennextjs-cloudflare deploy --config wrangler.staging.jsonc && npm run seed:staging",
+    "db:migrate:staging": "wrangler d1 migrations apply DB --remote --config wrangler.staging.jsonc",
+    "seed:staging": "node scripts/seed-staging.mjs",
     "cf-typegen": "wrangler types --env-interface CloudflareEnv ./cloudflare-env.d.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
@@ -43,6 +46,9 @@
       },
       "CF_API_KEY": {
         "description": "Legacy Global API Key auth only. Prefer `CF_TOKEN` for new deployments."
+      },
+      "SEED_SECRET": {
+        "description": "Shared secret that gates `POST /api/seed` in production so the staging build pipeline (`npm run seed:staging`) can re-seed the demo login asynchronously. Bind via `wrangler secret put SEED_SECRET --config wrangler.staging.jsonc`. The same value must be set as a Workers Builds build-environment variable so `scripts/seed-staging.mjs` can present it on the `x-seed-secret` header."
       }
     }
   },

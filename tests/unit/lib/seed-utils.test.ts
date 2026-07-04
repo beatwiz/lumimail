@@ -117,10 +117,17 @@ describe("insertDemoMessages", () => {
 		billing: { id: "mbx_billing" },
 	} as unknown as SeedMailboxMap;
 
+	// Each seed row now does a pre-insert SELECT on (userId, providerMessageId)
+	// for idempotency. Queue one empty result per seed message (15 total).
+	function queueFifteenEmptySelects() {
+		for (let i = 0; i < 15; i += 1) mock.queueSelect([]);
+	}
+
 	it("inserts every seed message with its body, queued/failed jobs, and contacts", async () => {
+		queueFifteenEmptySelects();
 		const count = await insertDemoMessages(env, "usr_1", mailboxMap);
 
-		// 15 seed messages.
+		// 15 seed messages on first run.
 		expect(count).toBe(15);
 
 		const messageInserts = mock.inserts.filter(
@@ -172,10 +179,85 @@ describe("insertDemoMessages", () => {
 		// Inbound uses fromAddr, outbound uses toAddr.
 		expect(inbound.every((c) => c.address.length > 0)).toBe(true);
 
-		// providerMessageId null falls through for draft/queued/failed seeds.
+		// Every seed row carries a stable providerMessageId now.
 		const nullProvider = messageInserts.filter(
 			(i) => (i.values as Record<string, unknown>).providerMessageId === null,
 		);
-		expect(nullProvider.length).toBeGreaterThan(0);
+		expect(nullProvider).toHaveLength(0);
+
+		// threadId is decoupled from the dedup key: the 7 synthetic seeds
+		// (`<seed-draft-…>`, `<seed-trash-billing…>`, `<seed-queued-…>`,
+		// `<seed-failed-…>`) must write threadId === null so the inbox
+		// does not turn them into a "thread of one" on
+		// /api/messages/thread/<id>.
+		const syntheticIds = [
+			"<seed-draft-webhook@example.test>",
+			"<seed-draft-renewal@example.test>",
+			"<seed-trash-billing@example.test>",
+			"<seed-queued-status@example.test>",
+			"<seed-queued-receipt@example.test>",
+			"<seed-failed-smtp@example.test>",
+			"<seed-failed-notice@example.test>",
+		];
+		const realIds = [
+			"<seed-inbox-access@example.test>",
+			"<seed-inbox-webhook@example.test>",
+			"<seed-inbox-invoice@example.test>",
+			"<seed-sent-access@example.test>",
+			"<seed-sent-invoice@example.test>",
+			"<seed-spam-promo@example.test>",
+			"<seed-spam-bank@example.test>",
+			"<seed-trash-migration@example.test>",
+		];
+		const syntheticInserts = messageInserts.filter((i) =>
+			syntheticIds.includes((i.values as Record<string, unknown>).providerMessageId as string),
+		);
+		expect(syntheticInserts).toHaveLength(7);
+		for (const insert of syntheticInserts) {
+			expect((insert.values as Record<string, unknown>).threadId).toBeNull();
+		}
+		const realInserts = messageInserts.filter((i) =>
+			realIds.includes((i.values as Record<string, unknown>).providerMessageId as string),
+		);
+		expect(realInserts).toHaveLength(8);
+		for (const insert of realInserts) {
+			const tid = (insert.values as Record<string, unknown>).threadId;
+			const pid = (insert.values as Record<string, unknown>).providerMessageId;
+			// Real threads inherit their providerMessageId as threadId (same
+			// value the production inbound pipeline records).
+			expect(tid).toBe(pid);
+		}
+	});
+
+	it("is idempotent: re-running with all rows already present inserts nothing", async () => {
+		// Pre-insert lookup for every seed row returns a hit → all seeds skipped.
+		for (let i = 0; i < 15; i += 1) mock.queueSelect([{ id: "msg_existing" }]);
+		const count = await insertDemoMessages(env, "usr_1", mailboxMap);
+
+		expect(count).toBe(0);
+		expect(mock.inserts).toHaveLength(0);
+		expect(upsertContactFromAddress).not.toHaveBeenCalled();
+	});
+
+	it("inserts only the rows the pre-lookup misses", async () => {
+		// First five seeds already exist; remaining ten are new.
+		for (let i = 0; i < 5; i += 1) mock.queueSelect([{ id: "msg_existing" }]);
+		for (let i = 0; i < 10; i += 1) mock.queueSelect([]);
+
+		const count = await insertDemoMessages(env, "usr_1", mailboxMap);
+
+		expect(count).toBe(10);
+
+		const messageInserts = mock.inserts.filter(
+			(i) => (i.values as Record<string, unknown>).direction !== undefined,
+		);
+		const bodyInserts = mock.inserts.filter(
+			(i) => (i.values as Record<string, unknown>).messageId !== undefined
+				&& (i.values as Record<string, unknown>).status === undefined,
+		);
+		expect(messageInserts).toHaveLength(10);
+		expect(bodyInserts).toHaveLength(10);
+		// 10 contacts upserted (one per newly inserted row).
+		expect(upsertContactFromAddress).toHaveBeenCalledTimes(10);
 	});
 });

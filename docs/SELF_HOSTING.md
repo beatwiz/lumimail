@@ -140,3 +140,10 @@ Never commit:
 - .env files
 - .dev.vars files
 - Private credentials
+
+## Staging
+
+The repo also ships a persistent Cloudflare Workers Builds staging worker
+(`lumimail-staging`) that shares no resources with this self-hosted install.
+See [`docs/STAGING.md`](./STAGING.md) for the owner-side one-time setup and
+the `npm run deploy:staging` command.

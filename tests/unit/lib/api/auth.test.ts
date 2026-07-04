@@ -13,7 +13,7 @@ vi.mock("@/lib/api-keys", () => ({
 	parseScopes: h.parseScopes,
 }));
 
-import { authenticateApiKey, requireScope } from "@/lib/api/auth";
+import { authenticateApiKey, requireScope, verifySharedSecret } from "@/lib/api/auth";
 
 const env = {} as CloudflareEnv;
 let mock: DbMock;
@@ -105,5 +105,39 @@ describe("requireScope", () => {
 
 	it("returns false for an empty scope list", () => {
 		expect(requireScope([], "a")).toBe(false);
+	});
+});
+
+describe("verifySharedSecret", () => {
+	it("returns true for matching strings", () => {
+		expect(verifySharedSecret("s3cret", "s3cret")).toBe(true);
+	});
+
+	it("returns false for differing strings of equal length", () => {
+		expect(verifySharedSecret("s3cret", "s3CrEt")).toBe(false);
+	});
+
+	it("returns false when lengths differ", () => {
+		expect(verifySharedSecret("short", "much-longer-secret")).toBe(false);
+	});
+
+	it("returns false when the provided value is null", () => {
+		expect(verifySharedSecret(null, "real")).toBe(false);
+	});
+
+	it("returns false when the provided value is undefined", () => {
+		expect(verifySharedSecret(undefined, "real")).toBe(false);
+	});
+
+	it("returns false when the expected value is null", () => {
+		expect(verifySharedSecret("real", null)).toBe(false);
+	});
+
+	it("returns false when the expected value is undefined", () => {
+		expect(verifySharedSecret("real", undefined)).toBe(false);
+	});
+
+	it("returns false when both are empty strings (no accidental open door)", () => {
+		expect(verifySharedSecret("", "")).toBe(false);
 	});
 });

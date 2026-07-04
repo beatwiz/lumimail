@@ -123,6 +123,14 @@ cp wrangler.jsonc.example wrangler.jsonc
 npm run deploy
 ```
 
+## Staging (Cloudflare Workers Builds)
+
+The repo also ships a persistent staging worker (`lumimail-staging`)
+that deploys on every push to `main` via Cloudflare's native Git
+integration — no GitHub Actions secrets required. See
+[docs/STAGING.md](docs/STAGING.md) for the one-time setup (D1 / R2 /
+queue names plus the dashboard fields).
+
 ### Required secrets
 
 | Variable | Description |

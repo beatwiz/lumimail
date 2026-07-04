@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { apiKeys, users } from "@/db/schema";
@@ -8,6 +9,21 @@ export type ApiAuthResult = {
 	email: string;
 	scopes: string[];
 };
+
+/**
+ * Constant-time compare of a caller-supplied shared secret against the
+ * expected server-side value. Returns false if either side is missing or
+ * the lengths differ — the length check runs first so `timingSafeEqual`
+ * never throws and so the overall signal is dominated by the constant-time
+ * comparison itself.
+ */
+export function verifySharedSecret(provided: string | null | undefined, expected: string | null | undefined): boolean {
+	if (!provided || !expected) return false;
+	const a = Buffer.from(provided, "utf8");
+	const b = Buffer.from(expected, "utf8");
+	if (a.length !== b.length) return false;
+	return timingSafeEqual(a, b);
+}
 
 export async function authenticateApiKey(
 	env: CloudflareEnv,

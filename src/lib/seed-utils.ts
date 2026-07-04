@@ -47,6 +47,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: false,
 		minutesAgo: 12,
 		providerMessageId: "<seed-inbox-access@example.test>",
+		threadId: "<seed-inbox-access@example.test>",
 	},
 	{
 		mailbox: "support",
@@ -60,6 +61,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: true,
 		minutesAgo: 47,
 		providerMessageId: "<seed-inbox-webhook@example.test>",
+		threadId: "<seed-inbox-webhook@example.test>",
 	},
 	{
 		mailbox: "billing",
@@ -73,6 +75,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: false,
 		minutesAgo: 94,
 		providerMessageId: "<seed-inbox-invoice@example.test>",
+		threadId: "<seed-inbox-invoice@example.test>",
 	},
 	{
 		mailbox: "support",
@@ -86,6 +89,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: true,
 		minutesAgo: 8,
 		providerMessageId: "<seed-sent-access@example.test>",
+		threadId: "<seed-sent-access@example.test>",
 	},
 	{
 		mailbox: "billing",
@@ -99,6 +103,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: true,
 		minutesAgo: 35,
 		providerMessageId: "<seed-sent-invoice@example.test>",
+		threadId: "<seed-sent-invoice@example.test>",
 	},
 	{
 		mailbox: "support",
@@ -111,6 +116,7 @@ const seedMessages: SeedMessageDefinition[] = [
 			"Draft note: include retry backoff details, delivery log location, and the recommendation to return HTTP 204 after processing.",
 		read: true,
 		minutesAgo: 22,
+		providerMessageId: "<seed-draft-webhook@example.test>",
 	},
 	{
 		mailbox: "billing",
@@ -123,6 +129,7 @@ const seedMessages: SeedMessageDefinition[] = [
 			"Draft renewal response with seat count, purchase order reference, and requested renewal date.",
 		read: true,
 		minutesAgo: 128,
+		providerMessageId: "<seed-draft-renewal@example.test>",
 	},
 	{
 		mailbox: "support",
@@ -136,6 +143,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: false,
 		minutesAgo: 166,
 		providerMessageId: "<seed-spam-promo@example.test>",
+		threadId: "<seed-spam-promo@example.test>",
 	},
 	{
 		mailbox: "billing",
@@ -149,6 +157,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: true,
 		minutesAgo: 219,
 		providerMessageId: "<seed-spam-bank@example.test>",
+		threadId: "<seed-spam-bank@example.test>",
 	},
 	{
 		mailbox: "support",
@@ -162,6 +171,7 @@ const seedMessages: SeedMessageDefinition[] = [
 		read: true,
 		minutesAgo: 266,
 		providerMessageId: "<seed-trash-migration@example.test>",
+		threadId: "<seed-trash-migration@example.test>",
 	},
 	{
 		mailbox: "billing",
@@ -174,6 +184,7 @@ const seedMessages: SeedMessageDefinition[] = [
 			"Discarded copy of an earlier billing reply that was replaced by the final invoice response.",
 		read: true,
 		minutesAgo: 314,
+		providerMessageId: "<seed-trash-billing@example.test>",
 	},
 	{
 		mailbox: "support",
@@ -186,6 +197,7 @@ const seedMessages: SeedMessageDefinition[] = [
 			"This seeded message represents an outbound email waiting for the worker queue to process.",
 		read: true,
 		minutesAgo: 4,
+		providerMessageId: "<seed-queued-status@example.test>",
 	},
 	{
 		mailbox: "billing",
@@ -198,6 +210,7 @@ const seedMessages: SeedMessageDefinition[] = [
 			"This seeded receipt is queued so API and background-job views can exercise pending delivery states.",
 		read: true,
 		minutesAgo: 17,
+		providerMessageId: "<seed-queued-receipt@example.test>",
 	},
 	{
 		mailbox: "support",
@@ -210,6 +223,7 @@ const seedMessages: SeedMessageDefinition[] = [
 			"This seeded message failed delivery after the provider rejected the recipient address.",
 		read: true,
 		minutesAgo: 73,
+		providerMessageId: "<seed-failed-smtp@example.test>",
 	},
 	{
 		mailbox: "billing",
@@ -222,6 +236,7 @@ const seedMessages: SeedMessageDefinition[] = [
 			"This seeded billing notice failed because the destination mailbox no longer exists.",
 		read: true,
 		minutesAgo: 181,
+		providerMessageId: "<seed-failed-notice@example.test>",
 	},
 ];
 
@@ -318,18 +333,35 @@ export async function insertDemoMessages(
 ): Promise<number> {
 	const db = getDb(env);
 	const now = Date.now();
+	let insertedCount = 0;
 
 	for (const seedMessage of seedMessages) {
+		const mailbox = mailboxMap[seedMessage.mailbox];
+		// Idempotency: every seed row carries a stable `providerMessageId` so
+		// running the pipeline multiple times does not duplicate demo messages.
+		// `threadId` is intentionally decoupled — the 7 synthetic seeds that
+		// have no real provider thread keep it null (otherwise the inbox would
+		// treat them as "thread of one" on /api/messages/thread/<id>).
+		const providerMessageId = seedMessage.providerMessageId;
+		const threadId = seedMessage.threadId ?? null;
+		const [existing] = await db
+			.select({ id: messages.id })
+			.from(messages)
+			.where(
+				and(eq(messages.userId, userId), eq(messages.providerMessageId, providerMessageId)),
+			)
+			.limit(1);
+		if (existing) continue;
+
 		const id = newId("msg");
 		const createdAt = new Date(now - seedMessage.minutesAgo * 60 * 1000);
-		const mailbox = mailboxMap[seedMessage.mailbox];
 
 		await db.insert(messages).values({
 			id,
 			userId,
 			mailboxId: mailbox.id,
 			direction: seedMessage.direction,
-			providerMessageId: seedMessage.providerMessageId ?? null,
+			providerMessageId,
 			fromAddr: seedMessage.fromAddr,
 			toAddr: seedMessage.toAddr,
 			subject: seedMessage.subject,
@@ -337,7 +369,7 @@ export async function insertDemoMessages(
 			status: seedMessage.status,
 			/* v8 ignore next -- every seed message defines `read`; the ?? default is defensive */
 			read: seedMessage.read ?? true,
-			threadId: seedMessage.providerMessageId ?? null,
+			threadId,
 			createdAt,
 		});
 
@@ -374,7 +406,9 @@ export async function insertDemoMessages(
 			address: seedMessage.direction === "inbound" ? seedMessage.fromAddr : seedMessage.toAddr,
 			source: seedMessage.direction === "inbound" ? "inbound" : "outbound",
 		});
+
+		insertedCount += 1;
 	}
 
-	return seedMessages.length;
+	return insertedCount;
 }

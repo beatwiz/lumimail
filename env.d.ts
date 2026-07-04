@@ -18,4 +18,11 @@ interface CloudflareEnv {
 	RESEND_API_KEY?: string;
 	/** Override the Resend API base URL (defaults to https://api.resend.com). */
 	RESEND_BASE_URL?: string;
+	/**
+	 * Shared secret that gates `POST /api/seed` in production. Bound by the
+	 * staging pipeline via `wrangler secret put SEED_SECRET --config
+	 * wrangler.staging.jsonc` so deploy hooks can seed the demo login
+	 * asynchronously without exposing the route publicly.
+	 */
+	SEED_SECRET?: string;
 }
