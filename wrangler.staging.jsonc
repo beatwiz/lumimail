@@ -1,89 +1,86 @@
 {
-	"$schema": "node_modules/wrangler/config-schema.json",
-	// Persistent staging worker.
-	// Worker is `lumimail-staging.*.workers.dev` once deployed via Cloudflare
-	// Workers Builds with this config as the production branch build input.
-	// Bindings reference resources that the owner creates once via the
-	// commands in `docs/STAGING.md`; the deploy step never recreates them.
-	"name": "lumimail-staging",
-	"main": "./worker.ts",
-	"compatibility_date": "2026-05-20",
-	"compatibility_flags": [
-		"nodejs_compat",
-		"global_fetch_strictly_public"
-	],
-	"assets": {
-		"binding": "ASSETS",
-		"directory": ".open-next/assets",
-	},
-	"images": {
-		"binding": "IMAGES",
-	},
-	"services": [
-		{
-			"binding": "WORKER_SELF_REFERENCE",
-			// Self-reference targets the staging worker itself so internal
-			// fetches stay inside the staging namespace.
-			"service": "lumimail-staging",
-		},
-	],
-	"vars": {
-		"CF_TOKEN": "cf-token",
-		"CF_ACCOUNT_ID": "cf-account-id",
-		// Email Routing rule created by onboarding should target THIS worker,
-		// not the production `lumimail` worker.
-		"CF_EMAIL_WORKER_NAME": "lumimail-staging",
-		// Outbound provider: "cloudflare" (default) or "resend".
-		"MAIL_PROVIDER": "cloudflare",
-	},
-	"observability": {
-		"enabled": true,
-	},
-	"upload_source_maps": true,
-	"send_email": [
-		{
-			"name": "EMAIL",
-			"remote": true,
-		},
-	],
-	"d1_databases": [
-		{
-			"binding": "DB",
-			"database_name": "lumimail-staging",
-			// Replace once after running `wrangler d1 create lumimail-staging`.
-			// D1 database IDs are not secrets.
-			"database_id": "REPLACE_WITH_STAGING_D1_DATABASE_ID",
-			"migrations_dir": "drizzle/migrations",
-		},
-	],
-	"r2_buckets": [
-		{
-			"binding": "BUCKET",
-			"bucket_name": "lumimail-staging-raw",
-		},
-	],
-	"queues": {
-		"producers": [
-			{
-				"binding": "INBOUND_QUEUE",
-				"queue": "lumimail-staging-inbound",
-			},
-			{
-				"binding": "OUTBOUND_QUEUE",
-				"queue": "lumimail-staging-outbound",
-			},
-		],
-		"consumers": [
-			{
-				"queue": "lumimail-staging-inbound",
-				"max_batch_size": 5,
-				"max_retries": 3,
-			},
-			{
-				"queue": "lumimail-staging-outbound",
-				"max_batch_size": 5,
-				"max_retries": 3,
-			},
-		],
-	},
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Persistent staging worker.
+  // Worker is `lumimail-staging.*.workers.dev` once deployed via Cloudflare
+  // Workers Builds with this config as the production branch build input.
+  // Bindings reference resources that the owner creates once via the
+  // commands in `docs/STAGING.md`; the deploy step never recreates them.
+  "name": "lumimail-staging",
+  "main": "./worker.ts",
+  "compatibility_date": "2026-05-20",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "binding": "ASSETS",
+    "directory": ".open-next/assets",
+  },
+  "images": {
+    "binding": "IMAGES",
+  },
+  "services": [
+    {
+      "binding": "WORKER_SELF_REFERENCE",
+      // Self-reference targets the staging worker itself so internal
+      // fetches stay inside the staging namespace.
+      "service": "lumimail-staging",
+    },
+  ],
+  "vars": {
+    "CF_TOKEN": "cf-token",
+    "CF_ACCOUNT_ID": "cf-account-id",
+    // Email Routing rule created by onboarding should target THIS worker,
+    // not the production `lumimail` worker.
+    "CF_EMAIL_WORKER_NAME": "lumimail-staging",
+    // Outbound provider: "cloudflare" (default) or "resend".
+    "MAIL_PROVIDER": "cloudflare",
+  },
+  "observability": {
+    "enabled": true,
+  },
+  "upload_source_maps": true,
+  "send_email": [
+    {
+      "name": "EMAIL",
+      "remote": true,
+    },
+  ],
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "lumimail-staging",
+      // Replace once after running `wrangler d1 create lumimail-staging`.
+      // D1 database IDs are not secrets.
+      "database_id": "a59126c2-642c-435c-bcd9-2d057e78e2fe",
+      "migrations_dir": "drizzle/migrations",
+    },
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "lumimail-staging-raw",
+    },
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "INBOUND_QUEUE",
+        "queue": "lumimail-staging-inbound",
+      },
+      {
+        "binding": "OUTBOUND_QUEUE",
+        "queue": "lumimail-staging-outbound",
+      },
+    ],
+    "consumers": [
+      {
+        "queue": "lumimail-staging-inbound",
+        "max_batch_size": 5,
+        "max_retries": 3,
+      },
+      {
+        "queue": "lumimail-staging-outbound",
+        "max_batch_size": 5,
+        "max_retries": 3,
+      },
+    ],
+  },
 }
