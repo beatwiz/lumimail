@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { ArrowRight, MailPlus } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@/components/ui/button";
@@ -61,7 +61,6 @@ export function OnboardingClient() {
 
 	return (
 		<AuthShell
-			icon={MailPlus}
 			title={step === 1 ? t("connectRouting") : t("createMailbox")}
 			description={
 				step === 1
@@ -73,7 +72,7 @@ export function OnboardingClient() {
 				{ label: t("mailbox"), active: step === 2 },
 			]}
 			footer={
-				<span className="inline-flex items-center gap-2 text-neutral-500">
+				<span className="inline-flex items-center gap-2 text-ink-muted">
 					{t("setupFooter")}
 					<ArrowRight className="h-4 w-4" />
 				</span>
@@ -82,7 +81,7 @@ export function OnboardingClient() {
 			<div className="space-y-5">
 				{step === 1 && (
 					<>
-						<p className="rounded-2xl bg-[#eaf1fb] px-4 py-3 text-sm leading-6 text-neutral-700">
+						<p className="rounded-2xl bg-surface-subtle px-4 py-3 text-sm leading-6 text-ink-muted">
 							{t("dnsInfo")}
 						</p>
 						<div className="space-y-2">
@@ -96,7 +95,7 @@ export function OnboardingClient() {
 						</div>
 						<Button
 							onClick={addDomain}
-							disabled={!hostname || loading}
+							disabled={formUnavailable(hostname, loading)}
 							className="h-11 w-full rounded-full px-6 active:scale-[0.98]"
 						>
 							{loading ? t("adding") : t("addDomain")}
@@ -114,12 +113,12 @@ export function OnboardingClient() {
 									onChange={(e) => setLocalPart(e.target.value)}
 									className="min-w-0"
 								/>
-								<span className="max-w-36 truncate text-sm font-medium text-neutral-500">@{hostname}</span>
+								<span className="max-w-36 truncate text-sm font-medium text-ink-muted">@{hostname}</span>
 							</div>
 						</div>
 						<Button
 							onClick={addMailbox}
-							disabled={!localPart || loading}
+							disabled={formUnavailable(localPart, loading)}
 							className="h-11 w-full rounded-full px-6 active:scale-[0.98]"
 						>
 							{loading ? t("creating") : t("goToInbox")}
@@ -127,11 +126,15 @@ export function OnboardingClient() {
 					</>
 				)}
 				{error && (
-					<p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+					<p className="rounded-2xl border border-danger/30 bg-danger-muted px-4 py-3 text-sm font-medium text-danger">
 						{error}
 					</p>
 				)}
 			</div>
 		</AuthShell>
 	);
+}
+
+function formUnavailable(value: string, loading: boolean) {
+	return !value || loading;
 }

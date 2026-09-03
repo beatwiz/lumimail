@@ -3,7 +3,8 @@
 import { useState } from "react";
 import { Plus, Users, X } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { authFetch } from "@/lib/auth/client";
+import { useFormatter, useTranslations } from "next-intl";
+import { apiJson } from "@/lib/api/client-response";
 import { Button } from "@/components/ui/button";
 
 type ContactSource = "manual" | "inbound" | "outbound";
@@ -17,10 +18,10 @@ type Contact = {
 	createdAt: string;
 };
 
-const SOURCE_BADGE: Record<ContactSource, { label: string; className: string }> = {
-	manual: { label: "Manual", className: "bg-blue-100 text-blue-700" },
-	inbound: { label: "Inbound", className: "bg-green-100 text-green-700" },
-	outbound: { label: "Outbound", className: "bg-purple-100 text-purple-700" },
+const SOURCE_BADGE: Record<ContactSource, { labelKey: "sourceManual" | "sourceInbound" | "sourceOutbound"; className: string }> = {
+	manual: { labelKey: "sourceManual", className: "bg-accent-muted text-accent" },
+	inbound: { labelKey: "sourceInbound", className: "bg-success-muted text-success" },
+	outbound: { labelKey: "sourceOutbound", className: "bg-info-muted text-info" },
 };
 
 function getInitial(contact: Contact): string {
@@ -28,18 +29,22 @@ function getInitial(contact: Contact): string {
 	return name.charAt(0).toUpperCase();
 }
 
-function formatDate(value: string | null): string {
+function formatDate(
+	format: ReturnType<typeof useFormatter>,
+	value: string | null,
+): string {
 	if (!value) return "—";
-	return new Date(value).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+	return format.dateTime(new Date(value), { year: "numeric", month: "short", day: "numeric" });
 }
 
 async function fetchContacts(): Promise<Contact[]> {
-	const res = await authFetch("/api/contacts");
-	const json = (await res.json()) as { success: boolean; data?: Contact[] };
-	return json.data ?? [];
+	return (await apiJson.get<Contact[] | null>("/api/contacts")) ?? [];
 }
 
 export default function ContactsPage() {
+	const t = useTranslations("contacts");
+	const tCommon = useTranslations("common");
+	const format = useFormatter();
 	const queryClient = useQueryClient();
 	const [search, setSearch] = useState("");
 	const [showForm, setShowForm] = useState(false);
@@ -54,14 +59,12 @@ export default function ContactsPage() {
 
 	const createMutation = useMutation({
 		mutationFn: async () => {
-			const res = await authFetch("/api/contacts", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ email: email.trim(), displayName: displayName.trim() || undefined }),
+			await apiJson.post("/api/contacts", {
+				email: email.trim(),
+				displayName: displayName.trim() || undefined,
 			});
-			const json = (await res.json()) as { success: boolean; error?: { message: string } };
-			if (!res.ok) throw new Error(json.error?.message ?? "Failed to create contact");
 		},
+		meta: { suppressErrorToast: true },
 		onSuccess: () => {
 			void queryClient.invalidateQueries({ queryKey: ["contacts"] });
 			setEmail("");
@@ -77,7 +80,7 @@ export default function ContactsPage() {
 	function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!email.trim()) {
-			setFormError("Email is required");
+			setFormError(t("emailRequired"));
 			return;
 		}
 		createMutation.mutate();
@@ -89,36 +92,36 @@ export default function ContactsPage() {
 	});
 
 	return (
-		<div className="space-y-6 p-6">
+		<div className="space-y-6 px-4 py-6 sm:px-12 sm:py-8">
 			<div className="flex items-center justify-between">
 				<div>
-					<h2 className="text-xl font-semibold text-neutral-900">Contacts</h2>
-					<p className="text-sm text-neutral-500">People you have emailed or received mail from.</p>
+					<h2 className="text-xl font-semibold text-ink">{t("title")}</h2>
+					<p className="text-sm text-ink-muted">{t("desc")}</p>
 				</div>
 				<Button onClick={() => setShowForm((v) => !v)} className="gap-2">
 					<Plus className="h-4 w-4" />
-					Add contact
+					{t("addContact")}
 				</Button>
 			</div>
 
 			{showForm && (
 				<form
 					onSubmit={handleSubmit}
-					className="rounded-lg border border-neutral-200 bg-white p-4 space-y-3"
+					className="rounded-lg border border-border bg-surface-raised p-4 space-y-3"
 				>
 					<div className="flex items-center justify-between">
-						<h3 className="text-sm font-medium text-neutral-700">New contact</h3>
+						<h3 className="text-sm font-medium text-ink-muted">{t("newContact")}</h3>
 						<button
 							type="button"
 							onClick={() => { setShowForm(false); setFormError(null); }}
-							className="text-neutral-400 hover:text-neutral-600"
+							className="text-ink-faint hover:text-ink-muted"
 						>
 							<X className="h-4 w-4" />
 						</button>
 					</div>
 
 					{formError && (
-						<p className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">
+						<p className="rounded-lg border border-danger/30 bg-danger-muted px-4 py-3 text-sm text-danger">
 							{formError}
 						</p>
 					)}
@@ -128,19 +131,19 @@ export default function ContactsPage() {
 							type="email"
 							value={email}
 							onChange={(e) => setEmail(e.target.value)}
-							placeholder="Email address"
+							placeholder={t("emailPlaceholder")}
 							required
-							className="h-9 flex-1 rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300"
+							className="h-9 flex-1 rounded-md border border-border bg-surface-subtle px-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-border-strong"
 						/>
 						<input
 							type="text"
 							value={displayName}
 							onChange={(e) => setDisplayName(e.target.value)}
-							placeholder="Display name (optional)"
-							className="h-9 flex-1 rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300"
+							placeholder={t("displayNamePlaceholder")}
+							className="h-9 flex-1 rounded-md border border-border bg-surface-subtle px-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-border-strong"
 						/>
 						<Button type="submit" disabled={createMutation.isPending}>
-							{createMutation.isPending ? "Adding…" : "Add"}
+							{createMutation.isPending ? t("adding") : tCommon("add")}
 						</Button>
 					</div>
 				</form>
@@ -151,22 +154,22 @@ export default function ContactsPage() {
 					type="search"
 					value={search}
 					onChange={(e) => setSearch(e.target.value)}
-					placeholder="Search contacts…"
-					className="h-9 w-full max-w-sm rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300"
+					placeholder={t("searchPlaceholder")}
+					className="h-9 w-full max-w-sm rounded-md border border-border bg-surface-subtle px-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-border-strong"
 				/>
 			</div>
 
 			{isLoading ? (
-				<p className="text-sm text-neutral-500">Loading…</p>
+				<p className="text-sm text-ink-muted">{t("loading")}</p>
 			) : filtered.length === 0 ? (
-				<div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-neutral-200 py-12 text-center">
-					<Users className="mb-3 h-8 w-8 text-neutral-300" />
-					<p className="text-sm text-neutral-500">
-						{search ? "No contacts match your search." : "No contacts yet. They appear automatically when you send or receive email."}
+				<div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border py-12 text-center">
+					<Users className="mb-3 h-8 w-8 text-ink-faint" />
+					<p className="text-sm text-ink-muted">
+						{search ? t("noSearchResults") : t("empty")}
 					</p>
 				</div>
 			) : (
-				<div className="divide-y divide-neutral-100 rounded-lg border border-neutral-200 bg-white">
+				<div className="divide-y divide-border rounded-lg border border-border bg-surface-raised">
 					{filtered.map((contact) => {
 						const badge = SOURCE_BADGE[contact.source] ?? SOURCE_BADGE.manual;
 						return (
@@ -174,20 +177,20 @@ export default function ContactsPage() {
 								key={contact.id}
 								className="flex items-center gap-4 px-4 py-3"
 							>
-								<div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-neutral-100 text-sm font-semibold text-neutral-700">
+								<div className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-surface-subtle text-sm font-semibold text-ink-muted">
 									{getInitial(contact)}
 								</div>
 								<div className="flex-1 min-w-0">
 									{contact.displayName && (
-										<p className="text-sm font-medium text-neutral-900 truncate">{contact.displayName}</p>
+										<p className="text-sm font-medium text-ink truncate">{contact.displayName}</p>
 									)}
-									<p className="text-sm text-neutral-500 truncate">{contact.email}</p>
+									<p className="text-sm text-ink-muted truncate">{contact.email}</p>
 								</div>
 								<span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${badge.className}`}>
-									{badge.label}
+									{t(badge.labelKey)}
 								</span>
-								<span className="shrink-0 text-xs text-neutral-400 tabular-nums">
-									{formatDate(contact.lastSeenAt)}
+								<span className="shrink-0 text-xs text-ink-faint tabular-nums">
+									{formatDate(format, contact.lastSeenAt)}
 								</span>
 							</div>
 						);

@@ -1,35 +1,44 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { NextResponse } from "next/server";
 
-const m = vi.hoisted(() => ({
-	guardUser: vi.fn(),
-	listUserDomains: vi.fn(),
-	getDomainDns: vi.fn(),
-	addDomainForUser: vi.fn(),
-}));
+const m = vi.hoisted(() => {
+	class DomainAlreadyRegisteredError extends Error {
+		constructor() {
+			super("Domain is already registered");
+			this.name = "DomainAlreadyRegisteredError";
+		}
+	}
+	return {
+		guardOrgAdmin: vi.fn(),
+		listUserDomains: vi.fn(),
+		getDomainDns: vi.fn(),
+		addDomainForUser: vi.fn(),
+		DomainAlreadyRegisteredError,
+	};
+});
 vi.mock("@/lib/cloudflare", () => ({ getEnv: () => ({}) }));
-vi.mock("@/lib/auth/cookies", () => ({ guardUser: m.guardUser }));
+vi.mock("@/lib/auth/org-guard", () => ({ guardOrgAdmin: m.guardOrgAdmin }));
 vi.mock("@/lib/domains/service", () => ({
 	listUserDomains: m.listUserDomains,
 	getDomainDns: m.getDomainDns,
 	addDomainForUser: m.addDomainForUser,
+	DomainAlreadyRegisteredError: m.DomainAlreadyRegisteredError,
 }));
 
 import { GET, POST } from "@/app/api/domains/route";
 
 const unauth = NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+const forbidden = NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
 beforeEach(() => {
-	m.guardUser.mockReset();
+	m.guardOrgAdmin.mockReset();
 	m.listUserDomains.mockReset();
 	m.getDomainDns.mockReset();
 	m.addDomainForUser.mockReset();
 });
 
 function getReq(url = "https://x.test/api/domains") {
-	// minimal NextRequest-like: only nextUrl.searchParams is used
-	const u = new URL(url);
-	return { nextUrl: { searchParams: u.searchParams } } as unknown as Parameters<typeof GET>[0];
+	return new Request(url);
 }
 
 function postReq(body?: unknown) {
@@ -41,37 +50,40 @@ function postReq(body?: unknown) {
 
 describe("GET /api/domains", () => {
 	it("returns 401 when unauthenticated", async () => {
-		m.guardUser.mockResolvedValue({ errorResponse: unauth });
+		m.guardOrgAdmin.mockResolvedValue({ errorResponse: unauth });
 		const res = await GET(getReq());
 		expect(res.status).toBe(401);
 	});
 
-	it("returns 400 when the user has no organization", async () => {
-		m.guardUser.mockResolvedValue({ user: { id: "u1", organizationId: null } });
+	it("returns 403 for a restricted member without listing domains", async () => {
+		m.guardOrgAdmin.mockResolvedValue({ errorResponse: forbidden });
 		const res = await GET(getReq());
-		expect(res.status).toBe(400);
-		expect((await res.json()) as any).toMatchObject({ error: { message: "No organization" } });
+		expect(res.status).toBe(403);
+		expect(m.listUserDomains).not.toHaveBeenCalled();
 	});
 
 	it("lists domains without DNS by default", async () => {
-		m.guardUser.mockResolvedValue({ user: { id: "u1", organizationId: "o1" } });
+		m.guardOrgAdmin.mockResolvedValue({ orgUser: { id: "u1", organizationId: "o1" } });
 		m.listUserDomains.mockResolvedValue([{ id: "d1" }]);
 		const res = await GET(getReq());
 		expect(res.status).toBe(200);
-		expect((await res.json()) as any).toEqual({ domains: [{ id: "d1" }] });
+		expect((await res.json()) as any).toEqual({
+			success: true,
+			data: { domains: [{ id: "d1" }] },
+		});
 		expect(m.getDomainDns).not.toHaveBeenCalled();
 	});
 
 	it("includes a DNS summary for fulfilled domains and skips rejected ones", async () => {
-		m.guardUser.mockResolvedValue({ user: { id: "u1", organizationId: "o1" } });
+		m.guardOrgAdmin.mockResolvedValue({ orgUser: { id: "u1", organizationId: "o1" } });
 		m.listUserDomains.mockResolvedValue([{ id: "d1" }, { id: "d2" }]);
 		m.getDomainDns.mockImplementation(async (_env: unknown, domain: { id: string }) => {
 			if (domain.id === "d2") throw new Error("boom");
-			return { routing: { records: [], missing: [] }, sending: [] };
+			return { routing: { records: [], missing: [] }, sending: { enabled: false, records: [] } };
 		});
 		const res = await GET(getReq("https://x.test/api/domains?includeDns=true"));
 		expect(res.status).toBe(200);
-		const body = (await res.json()) as any;
+		const body = ((await res.json()) as any).data;
 		expect(body.dns.d1).toBeDefined();
 		expect(body.dns.d2).toBeUndefined();
 	});
@@ -79,20 +91,20 @@ describe("GET /api/domains", () => {
 
 describe("POST /api/domains", () => {
 	it("returns 401 when unauthenticated", async () => {
-		m.guardUser.mockResolvedValue({ errorResponse: unauth });
+		m.guardOrgAdmin.mockResolvedValue({ errorResponse: unauth });
 		const res = await POST(postReq({ hostname: "example.com" }));
 		expect(res.status).toBe(401);
 	});
 
 	it("returns 400 for an invalid body", async () => {
-		m.guardUser.mockResolvedValue({ user: { id: "u1", organizationId: "o1" } });
+		m.guardOrgAdmin.mockResolvedValue({ orgUser: { id: "u1", organizationId: "o1" } });
 		const res = await POST(postReq({ hostname: "nope" }));
 		expect(res.status).toBe(400);
 		expect((await res.json()) as any).toMatchObject({ error: { message: "Validation failed" } });
 	});
 
 	it("adds a domain on success", async () => {
-		m.guardUser.mockResolvedValue({ user: { id: "u1", organizationId: "o1" } });
+		m.guardOrgAdmin.mockResolvedValue({ orgUser: { id: "u1", organizationId: "o1" } });
 		m.addDomainForUser.mockResolvedValue({ id: "d1" });
 		const res = await POST(postReq({ hostname: "example.com", enableRouting: true, enableSending: false }));
 		expect(res.status).toBe(200);
@@ -103,9 +115,19 @@ describe("POST /api/domains", () => {
 		});
 	});
 
-	it("returns 400 when the service throws", async () => {
-		m.guardUser.mockResolvedValue({ user: { id: "u1", organizationId: "o1" } });
-		m.addDomainForUser.mockRejectedValue(new Error("dup"));
+	it("returns 409 when the hostname is already registered to another organization", async () => {
+		m.guardOrgAdmin.mockResolvedValue({ orgUser: { id: "u1", organizationId: "o1" } });
+		m.addDomainForUser.mockRejectedValue(new m.DomainAlreadyRegisteredError());
+		const res = await POST(postReq({ hostname: "example.com" }));
+		expect(res.status).toBe(409);
+		expect((await res.json()) as any).toMatchObject({
+			error: { message: "Domain is already registered" },
+		});
+	});
+
+	it("returns 400 when Cloudflare provisioning fails", async () => {
+		m.guardOrgAdmin.mockResolvedValue({ orgUser: { id: "u1", organizationId: "o1" } });
+		m.addDomainForUser.mockRejectedValue(new Error("zone lookup failed"));
 		const res = await POST(postReq({ hostname: "example.com" }));
 		expect(res.status).toBe(400);
 		expect((await res.json()) as any).toMatchObject({ error: { message: "Failed to add domain" } });

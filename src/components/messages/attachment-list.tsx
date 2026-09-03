@@ -9,11 +9,24 @@ type AttachmentRow = {
 	filename: string;
 	contentType: string;
 	size: number;
+	disposition: "attachment" | "inline";
+	contentId: string | null;
 };
 
 type AttachmentsResponse = {
-	data?: { attachments?: AttachmentRow[] };
+	data?: {
+		attachmentStatus?: "none" | "stored" | "omitted";
+		attachmentError?: string | null;
+		attachments?: AttachmentRow[];
+	};
 };
+
+const SAFE_IMAGE_TYPES = new Set([
+	"image/jpeg",
+	"image/png",
+	"image/gif",
+	"image/webp",
+]);
 
 function formatSize(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
@@ -23,14 +36,21 @@ function formatSize(bytes: number): string {
 
 export function AttachmentList({ messageId }: { messageId: string }) {
 	const [items, setItems] = useState<AttachmentRow[]>([]);
+	const [omission, setOmission] = useState<string | null>(null);
 
 	useEffect(() => {
 		let cancelled = false;
 		authFetch(`/api/messages/${messageId}/attachments`)
 			.then((res) => (res.ok ? (res.json() as Promise<AttachmentsResponse>) : null))
 			.then((payload) => {
-				if (cancelled || !payload?.data?.attachments) return;
-				setItems(payload.data.attachments);
+				if (cancelled || !payload?.data) return;
+				setItems(payload.data.attachments ?? []);
+				setOmission(
+					payload.data.attachmentStatus === "omitted"
+						? payload.data.attachmentError ??
+							"Attachments were omitted for safety."
+						: null,
+				);
 			})
 			.catch(() => {
 				/* attachments are best-effort */
@@ -40,25 +60,36 @@ export function AttachmentList({ messageId }: { messageId: string }) {
 		};
 	}, [messageId]);
 
-	if (items.length === 0) return null;
+	const regularItems = items.filter((item) => item.disposition !== "inline");
+	if (regularItems.length === 0 && !omission) return null;
 
 	return (
-		<section className="mt-6 border-t border-neutral-100 pt-4" aria-label="Attachments">
-			<p className="mb-3 flex items-center gap-2 text-xs font-medium text-neutral-500">
-				<Paperclip className="h-4 w-4" />
-				{items.length} attachment{items.length > 1 ? "s" : ""}
-			</p>
+		<section className="mt-6 border-t border-border pt-4" aria-label="Attachments">
+			{omission ? (
+				<p
+					role="status"
+					className="mb-3 rounded-lg border border-warning bg-warning-muted px-3 py-2 text-sm text-warning"
+				>
+					{omission}
+				</p>
+			) : null}
+			{regularItems.length > 0 ? (
+				<p className="mb-3 flex items-center gap-2 text-xs font-medium text-ink-muted">
+					<Paperclip className="h-4 w-4" />
+					{regularItems.length} attachment{regularItems.length !== 1 ? "s" : ""}
+				</p>
+			) : null}
 			<ul className="flex flex-col gap-3">
-				{items.map((item) => (
+				{regularItems.map((item) => (
 					<li key={item.id} className="flex flex-col gap-2">
 						<AttachmentPreview item={item} />
 						<a
 							href={`/api/attachments/${item.id}`}
-							className="flex w-fit items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm text-neutral-700 transition-colors hover:border-neutral-300 hover:bg-neutral-50"
+							className="flex w-fit items-center gap-2 rounded-lg border border-border bg-surface-raised px-3 py-2 text-sm text-ink-muted transition-colors hover:border-border-strong hover:bg-surface-subtle"
 						>
-							<Download className="h-4 w-4 text-neutral-400" />
+							<Download className="h-4 w-4 text-ink-faint" />
 							<span className="max-w-[14rem] truncate">{item.filename}</span>
-							<span className="text-xs text-neutral-400">{formatSize(item.size)}</span>
+							<span className="text-xs text-ink-faint">{formatSize(item.size)}</span>
 						</a>
 					</li>
 				))}
@@ -70,13 +101,13 @@ export function AttachmentList({ messageId }: { messageId: string }) {
 function AttachmentPreview({ item }: { item: AttachmentRow }) {
 	const inlineSrc = `/api/attachments/${item.id}?disposition=inline`;
 
-	if (item.contentType.startsWith("image/")) {
+	if (SAFE_IMAGE_TYPES.has(item.contentType.trim().toLowerCase())) {
 		return (
 			// eslint-disable-next-line @next/next/no-img-element
 			<img
 				src={inlineSrc}
 				alt={item.filename}
-				className="max-h-96 max-w-full rounded-lg border border-neutral-200 object-contain"
+				className="max-h-96 max-w-full rounded-lg border border-border object-contain"
 				loading="lazy"
 			/>
 		);
@@ -87,7 +118,7 @@ function AttachmentPreview({ item }: { item: AttachmentRow }) {
 			<iframe
 				src={inlineSrc}
 				title={item.filename}
-				className="h-96 w-full max-w-2xl rounded-lg border border-neutral-200"
+				className="h-96 w-full max-w-2xl rounded-lg border border-border"
 			/>
 		);
 	}

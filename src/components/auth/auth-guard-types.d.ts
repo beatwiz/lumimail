@@ -6,4 +6,6 @@ export type AuthGuardProps = {
 	children: ReactNode;
 	mode?: AuthGuardMode;
 	requireMailbox?: boolean;
+	requireOrgAdmin?: boolean;
+	requireOrgOwner?: boolean;
 };

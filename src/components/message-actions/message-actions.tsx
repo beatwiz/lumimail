@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Archive, Mail, MailOpen, MoreVertical, Reply, ShieldAlert, Trash2 } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
@@ -9,10 +10,36 @@ import { Tooltip } from "@/components/ui/tooltip";
 import type { BulkMessageAction } from "@/app/api/messages/bulk/types";
 import type { MessageActionsProps } from "./types";
 import { getMessageActionRedirect, runSingleMessageAction } from "./utils";
+import { Select } from "@/components/ui/select";
+import { useSelectedMailbox } from "@/components/mailbox-provider";
+import { resolveReplyMailboxId } from "@/components/mailbox-scope-utils";
 
-export function MessageActions({ messageId, direction, status, read, fromAddr, toAddr, subject }: MessageActionsProps) {
+export function MessageActions({
+	messageId,
+	direction,
+	status,
+	read,
+	fromAddr,
+	toAddr,
+	subject,
+	mailboxId,
+	canSend = false,
+	onActionSuccess,
+}: MessageActionsProps) {
 	const t = useTranslations("actions");
 	const router = useRouter();
+	const queryClient = useQueryClient();
+	const { mailboxes } = useSelectedMailbox();
+
+	/**
+	 * Seeds the composer with the mailbox this message belongs to. Null when the
+	 * message has none, or names one the caller can no longer read — the composer
+	 * then keeps the active mailbox.
+	 */
+	function sendingMailboxParam(params: URLSearchParams) {
+		const replyMailboxId = resolveReplyMailboxId({ mailboxId: mailboxId ?? null }, mailboxes);
+		if (replyMailboxId) params.set("fromMailboxId", replyMailboxId);
+	}
 
 	function replyTo() {
 		const replyAddr = direction === "inbound" ? fromAddr : toAddr;
@@ -20,6 +47,7 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 		if (replyAddr) params.set("to", replyAddr);
 		if (subject) params.set("subject", subject.startsWith("Re:") ? subject : `Re: ${subject}`);
 		params.set("inReplyTo", messageId);
+		sendingMailboxParam(params);
 		router.push(`/compose?${params.toString()}`);
 	}
 
@@ -27,6 +55,7 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 		const params = new URLSearchParams();
 		if (subject) params.set("subject", subject.startsWith("Fwd:") ? subject : `Fwd: ${subject}`);
 		params.set("forwardOf", messageId);
+		sendingMailboxParam(params);
 		router.push(`/compose?${params.toString()}`);
 	}
 	const [pendingAction, setPendingAction] = useState<BulkMessageAction | null>(null);
@@ -36,7 +65,8 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 		setPendingAction(action);
 		setError(null);
 		try {
-			await runSingleMessageAction(messageId, action);
+			await runSingleMessageAction(queryClient, messageId, action);
+			onActionSuccess?.(action);
 			const redirect = getMessageActionRedirect(action, direction);
 			if (redirect) router.push(redirect);
 			router.refresh();
@@ -51,19 +81,23 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 	const markAction: BulkMessageAction = read ? "unread" : "read";
 
 	return (
-		<div className="flex items-center gap-3 text-neutral-600">
-			{error && <span className="text-xs text-red-600">{error}</span>}
+		<div className="flex items-center gap-3 text-ink-muted">
+			{error && <span className="text-xs text-danger">{error}</span>}
 			<div className="flex items-center gap-2">
-				<Tooltip label={t("reply")}>
-					<Button type="button" variant="ghost" size="sm" aria-label={t("reply")} onClick={replyTo}>
-						<Reply className="h-5 w-5" />
-					</Button>
-				</Tooltip>
-				<Tooltip label="Forward">
-					<Button type="button" variant="ghost" size="sm" aria-label="Forward" onClick={forwardMsg}>
-						<Reply className="h-5 w-5 scale-x-[-1]" />
-					</Button>
-				</Tooltip>
+				{canSend && (
+					<>
+						<Tooltip label={t("reply")}>
+							<Button type="button" variant="ghost" size="sm" aria-label={t("reply")} onClick={replyTo}>
+								<Reply className="h-5 w-5" />
+							</Button>
+						</Tooltip>
+						<Tooltip label="Forward">
+							<Button type="button" variant="ghost" size="sm" aria-label="Forward" onClick={forwardMsg}>
+								<Reply className="h-5 w-5 scale-x-[-1]" />
+							</Button>
+						</Tooltip>
+					</>
+				)}
 				<Tooltip label={t("archive")}>
 					<Button
 						variant="ghost"
@@ -109,8 +143,8 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 					</Button>
 				</Tooltip>
 				<Tooltip label={t("moveMessage")}>
-					<select
-						className="h-8 rounded-lg border border-neutral-200 bg-white px-2 text-xs text-neutral-700"
+					<Select
+						size="sm" className="w-auto"
 						disabled={disabled}
 						defaultValue=""
 						aria-label={t("moveMessage")}
@@ -121,12 +155,14 @@ export function MessageActions({ messageId, direction, status, read, fromAddr, t
 						}}
 					>
 						<option value="">{t("moveTo")}</option>
+						{/* Inbox is what makes archive/spam/trash reversible. */}
+						<option value="inbox">{t("moveToInbox")}</option>
 						<option value="spam">{t("moveToSpam")}</option>
 						<option value="trash">{t("moveToTrash")}</option>
-					</select>
+					</Select>
 				</Tooltip>
 				<Tooltip label={t("moreActions")}>
-					<span aria-label={t("moreActions")} className="rounded-full p-1 text-neutral-400">
+					<span aria-label={t("moreActions")} className="rounded-full p-1 text-ink-faint">
 						<MoreVertical className="h-5 w-5" />
 					</span>
 				</Tooltip>

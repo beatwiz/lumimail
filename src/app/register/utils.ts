@@ -1,5 +1,5 @@
-import { persistAuthSession } from "@/lib/auth/client";
 import type { DomainSetupResult, SetupStatus } from "./types";
+import { persistAuthSession } from "@/lib/auth/client";
 
 export async function getSetupStatus(): Promise<SetupStatus> {
   const res = await fetch("/api/setup/status");
@@ -12,9 +12,13 @@ export async function submitPrimaryDomain(form: FormData): Promise<{ ok: boolean
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ hostname: form.get("domain") }),
   });
+  const body = (await res.json()) as {
+    data?: DomainSetupResult;
+    error?: { message?: string };
+  };
   return {
     ok: res.ok,
-    data: (await res.json()) as DomainSetupResult,
+    data: res.ok ? (body.data ?? {}) : { error: body.error?.message },
   };
 }
 
@@ -27,21 +31,22 @@ export async function submitRegistration(
   form: FormData,
   opts: { firstRun: boolean; domain: string; inviteToken: string | null },
 ): Promise<RegistrationResult> {
-  const body: Record<string, unknown> = opts.firstRun
-    ? { domain: opts.domain, username: form.get("username"), password: form.get("password"), resetEmail: form.get("resetEmail") }
-    : { username: form.get("username"), password: form.get("password"), resetEmail: form.get("resetEmail") };
-
-  if (opts.inviteToken) body.inviteToken = opts.inviteToken;
+  const body: Record<string, unknown> = opts.inviteToken
+    ? {
+        inviteToken: opts.inviteToken,
+        password: form.get("password"),
+        resetEmail: form.get("resetEmail"),
+      }
+    : opts.firstRun
+      ? { domain: opts.domain, username: form.get("username"), password: form.get("password"), resetEmail: form.get("resetEmail") }
+      : { username: form.get("username"), password: form.get("password"), resetEmail: form.get("resetEmail") };
 
   const res = await fetch("/api/auth/register", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const data = (await res.json()) as Record<string, unknown>;
-  if (res.ok && typeof data.token === "string") {
-    try { localStorage.setItem("lumimail-session-token", data.token); } catch { /* noop */ }
-  }
+  const data = (await persistAuthSession(res)) as Record<string, unknown>;
   return {
     ok: res.ok,
     data: {

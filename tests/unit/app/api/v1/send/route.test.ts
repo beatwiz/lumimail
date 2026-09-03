@@ -56,11 +56,80 @@ describe("POST /api/v1/send", () => {
 	it("sends the email on success", async () => {
 		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
 		m.requireScope.mockReturnValue(true);
-		m.sendEmail.mockResolvedValue({ id: "msg1" });
+		m.sendEmail.mockResolvedValue({ messageId: "msg1", status: "queued" });
 		const res = await POST(req(validBody));
-		expect(res.status).toBe(200);
-		expect((await res.json()) as any).toEqual({ success: true, data: { id: "msg1" } });
+		expect(res.status).toBe(202);
+		expect((await res.json()) as any).toEqual({
+			success: true,
+			data: { messageId: "msg1", status: "queued" },
+		});
 		expect(m.sendEmail).toHaveBeenCalledWith({}, { userId: "u1", ...validBody });
+	});
+
+	it("decodes API attachment content before sending", async () => {
+		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
+		m.requireScope.mockReturnValue(true);
+		m.sendEmail.mockResolvedValue({ messageId: "msg1", status: "queued" });
+
+		const res = await POST(req({
+			...validBody,
+			attachments: [{
+				filename: "hello.txt",
+				contentType: "text/plain",
+				contentBase64: "aGVsbG8=",
+			}],
+		}));
+
+		expect(res.status).toBe(202);
+		expect(m.sendEmail).toHaveBeenCalledWith({}, expect.objectContaining({
+			attachments: [expect.objectContaining({ filename: "hello.txt", size: 5 })],
+		}));
+	});
+
+	it("returns 400 for malformed JSON", async () => {
+		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
+		m.requireScope.mockReturnValue(true);
+		const res = await POST(new Request("https://x.test/api/v1/send", {
+			method: "POST",
+			headers: { authorization: "Bearer ep_key" },
+			body: "{",
+		}));
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects a non-array attachments value", async () => {
+		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
+		m.requireScope.mockReturnValue(true);
+		const res = await POST(req({ ...validBody, attachments: "no" }));
+		expect(res.status).toBe(400);
+	});
+
+	it.each([
+		null,
+		{},
+		{ filename: 1, contentType: "text/plain", contentBase64: "" },
+		{ filename: "x.txt", contentType: 1, contentBase64: "" },
+		{ filename: "x.txt", contentType: "text/plain", contentBase64: 1 },
+	])("rejects malformed attachment metadata %#", async (attachment) => {
+		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
+		m.requireScope.mockReturnValue(true);
+		const res = await POST(req({ ...validBody, attachments: [attachment] }));
+		expect(res.status).toBe(400);
+	});
+
+	it("rejects excessive API attachment count and encoded size", async () => {
+		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
+		m.requireScope.mockReturnValue(true);
+		const attachment = { filename: "x.txt", contentType: "text/plain", contentBase64: "" };
+		expect((await POST(req({
+			...validBody,
+			attachments: Array.from({ length: 11 }, () => attachment),
+		}))).status).toBe(400);
+		expect((await POST(req({
+			...validBody,
+			attachments: [{ ...attachment, contentBase64: "A".repeat(4_194_308) }],
+		}))).status).toBe(400);
+		expect(m.sendEmail).not.toHaveBeenCalled();
 	});
 
 	it("returns 500 when sendEmail throws", async () => {
@@ -70,5 +139,28 @@ describe("POST /api/v1/send", () => {
 		const res = await POST(req(validBody));
 		expect(res.status).toBe(500);
 		expect((await res.json()) as any).toMatchObject({ error: { message: "Send failed" } });
+	});
+
+	it("returns 404 when the key owner is not assigned to the sender mailbox", async () => {
+		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
+		m.requireScope.mockReturnValue(true);
+		const error = new Error("denied");
+		error.name = "SenderNotAllowedError";
+		m.sendEmail.mockRejectedValue(error);
+		const res = await POST(req(validBody));
+		expect(res.status).toBe(404);
+	});
+
+	it("returns 404 for an inaccessible reply source", async () => {
+		m.authenticateApiKey.mockResolvedValue({ userId: "u1", scopes: ["send"] });
+		m.requireScope.mockReturnValue(true);
+		const error = new Error("denied");
+		error.name = "ReplySourceNotAllowedError";
+		m.sendEmail.mockRejectedValue(error);
+		const res = await POST(req({ ...validBody, replyToMessageId: "msg_parent" }));
+		expect(res.status).toBe(404);
+		expect((await res.json()) as any).toMatchObject({
+			error: { message: "Reply source not found" },
+		});
 	});
 });

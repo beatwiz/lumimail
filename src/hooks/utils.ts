@@ -1,4 +1,4 @@
-import { authFetch } from "@/lib/auth/client";
+import { apiJson } from "@/lib/api/client-response";
 import type { MessageFilterOptions, MessageFolder } from "./types";
 import type { MessageCounts, MessageListResponse } from "./types";
 
@@ -26,6 +26,21 @@ export function parseMessageSearchQuery(query: string): MessageFilterOptions {
 	return filters;
 }
 
+/**
+ * Statuses a label view lists: everything the messages API accepts except
+ * `trash` and `spam`. Written as an allowlist rather than an exclusion so a
+ * future status has to be considered deliberately instead of appearing in
+ * label views by default.
+ */
+export const LABEL_VISIBLE_STATUSES = [
+	"received",
+	"sent",
+	"draft",
+	"queued",
+	"failed",
+	"archived",
+] as const;
+
 export function getMessageQueryParams(
 	folder: MessageFolder,
 	mailboxId?: string | null,
@@ -40,7 +55,7 @@ export function getMessageQueryParams(
 
 	if (folder === "sent") {
 		params.set("direction", "outbound");
-		params.set("status", "sent");
+		params.set("status", "queued,sent,failed");
 	}
 
 	if (folder === "drafts") {
@@ -50,6 +65,20 @@ export function getMessageQueryParams(
 
 	if (folder === "trash" || folder === "spam") {
 		params.set("status", folder);
+	}
+
+	// Archive holds mail in both directions, so unlike Inbox and Sent it
+	// constrains status alone.
+	if (folder === "archived") {
+		params.set("status", "archived");
+	}
+
+	// A label spans folders, so it constrains `labelId` (set from `filters`
+	// below) rather than status — except that trashed and spam mail stays out.
+	// A label is a filing destination; deleted mail that happens to still carry
+	// the label is not something the user filed there.
+	if (folder === "label") {
+		params.set("status", LABEL_VISIBLE_STATUSES.join(","));
 	}
 
 	if (folder === "starred") {
@@ -68,57 +97,23 @@ export function getMessageQueryParams(
 	return params;
 }
 
-const messageCountsCache = new Map<string, MessageCounts>();
-const messageCountsRequests = new Map<string, Promise<MessageCounts | undefined>>();
-const messageListCache = new Map<string, MessageListResponse>();
-const messageListRequests = new Map<string, Promise<MessageListResponse>>();
-
-export function clearMessageCountsCache() {
-	messageCountsCache.clear();
+/**
+ * Plain fetchers for the message endpoints. Caching, request dedupe, and
+ * cross-component invalidation all belong to TanStack Query now (T-34): these
+ * run as `queryFn`s under `messageKeys` from `src/lib/query-keys.ts`, and the
+ * account-switch isolation contract (F50) is met by the root QueryClient
+ * clearing itself via the account-state reset coordinator.
+ */
+export async function fetchMessageCounts(mailboxId?: string | null): Promise<MessageCounts | undefined> {
+	const params = new URLSearchParams();
+	if (mailboxId) params.set("mailboxId", mailboxId);
+	const query = params.toString();
+	const data = await apiJson.get<{ counts?: MessageCounts }>(
+		`/api/messages/counts${query ? `?${query}` : ""}`,
+	);
+	return data.counts;
 }
 
-export function clearMessageListCache() {
-	messageListCache.clear();
-}
-
-export async function fetchMessageCounts(mailboxId?: string | null, force = false): Promise<MessageCounts | undefined> {
-	const key = mailboxId ?? "all";
-	if (!force && messageCountsCache.has(key)) return messageCountsCache.get(key);
-	if (messageCountsRequests.has(key)) return messageCountsRequests.get(key);
-
-	const request = (async () => {
-		const params = new URLSearchParams();
-		if (mailboxId) params.set("mailboxId", mailboxId);
-		const query = params.toString();
-		const res = await authFetch(`/api/messages/counts${query ? `?${query}` : ""}`);
-		const data = (await res.json()) as { counts?: MessageCounts };
-		const counts = data.counts;
-		if (counts) messageCountsCache.set(key, counts);
-		return counts;
-	})().finally(() => {
-		messageCountsRequests.delete(key);
-	});
-
-	messageCountsRequests.set(key, request);
-	return request;
-}
-
-export async function fetchMessageList(params: URLSearchParams, force = false): Promise<MessageListResponse> {
-	const key = params.toString();
-	if (!force && messageListCache.has(key)) return messageListCache.get(key) ?? {};
-	if (messageListRequests.has(key)) return messageListRequests.get(key) ?? {};
-
-	const request = authFetch(`/api/messages?${key}`)
-		.then((res) => res.json())
-		.then((data) => {
-			const response = data as MessageListResponse;
-			messageListCache.set(key, response);
-			return response;
-		})
-		.finally(() => {
-			messageListRequests.delete(key);
-		});
-
-	messageListRequests.set(key, request);
-	return request;
+export async function fetchMessageList(params: URLSearchParams): Promise<MessageListResponse> {
+	return apiJson.get<MessageListResponse>(`/api/messages?${params.toString()}`);
 }

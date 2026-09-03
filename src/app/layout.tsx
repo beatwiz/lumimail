@@ -1,16 +1,27 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist_Mono, IBM_Plex_Sans, Plus_Jakarta_Sans } from "next/font/google";
 import { Providers } from "@/components/providers";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getMessages } from "next-intl/server";
 import { rtlLocales } from "@/i18n/config";
-import { LanguageSwitcher } from "@/components/language-switcher";
 import { ServiceWorkerRegistration } from "@/components/service-worker-registration";
 import "./globals.css";
 
-const geistSans = Geist({
-	variable: "--font-geist-sans",
-	subsets: ["latin"],
+// Applies the saved theme before first paint to avoid a light/dark flash.
+const themeScript = `(function(){try{var t=localStorage.getItem('theme');if(t==='dark'||t==='light'){document.documentElement.setAttribute('data-theme',t);}}catch(e){}})();`;
+
+const bodySans = IBM_Plex_Sans({
+	variable: "--font-body",
+	subsets: ["latin", "latin-ext", "cyrillic", "vietnamese"],
+	weight: "variable",
+	display: "swap",
+});
+
+const displaySans = Plus_Jakarta_Sans({
+	variable: "--font-picket-display",
+	subsets: ["latin", "latin-ext", "vietnamese"],
+	weight: "variable",
+	display: "swap",
 });
 
 const geistMono = Geist_Mono({
@@ -19,21 +30,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-	applicationName: "Lumimail",
-	title: "Lumimail",
+	applicationName: "Picket",
+	title: "Picket",
 	description: "Multi-tenant email on Cloudflare",
 	manifest: "/manifest.webmanifest",
 	icons: {
 		icon: [
-			{ url: "/favicon.ico" },
-			{ url: "/icon-192.png", sizes: "192x192", type: "image/png" },
-			{ url: "/icon-512.png", sizes: "512x512", type: "image/png" },
+			{ url: "/picket-favicon-v1.ico" },
+			{ url: "/picket-icon-v1-192.png", sizes: "192x192", type: "image/png" },
+			{ url: "/picket-icon-v1-512.png", sizes: "512x512", type: "image/png" },
 		],
-		apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+		apple: [{ url: "/picket-apple-touch-icon-v1.png", sizes: "180x180", type: "image/png" }],
 	},
 	appleWebApp: {
 		capable: true,
-		title: "Lumimail",
+		title: "Picket",
 		statusBarStyle: "default",
 	},
 	formatDetection: {
@@ -42,8 +53,8 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-	colorScheme: "light",
-	themeColor: "#2563eb",
+	colorScheme: "light dark",
+	themeColor: "#0D1524",
 	viewportFit: "cover",
 };
 
@@ -54,11 +65,11 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
 
 	return (
 		<html lang={locale} dir={dir}>
-			<body className={`${geistSans.variable} ${geistMono.variable} antialiased light`}>
+			<body className={`${bodySans.variable} ${displaySans.variable} ${geistMono.variable} antialiased`}>
+				<script dangerouslySetInnerHTML={{ __html: themeScript }} />
 				<NextIntlClientProvider messages={messages}>
 					<Providers>
 						<ServiceWorkerRegistration />
-						<LanguageSwitcher />
 						{children}
 					</Providers>
 				</NextIntlClientProvider>

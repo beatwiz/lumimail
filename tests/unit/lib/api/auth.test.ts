@@ -53,13 +53,14 @@ describe("authenticateApiKey", () => {
 				{ id: "k2", keyHash: "hash2", userId: "u2" },
 			])
 			.queueSelect([]) // user lookup for k1 -> missing
-			.queueSelect([{ id: "u2", email: "two@example.com" }]); // user lookup for k2
+			.queueSelect([{ id: "u2", email: "two@example.com" }]) // user lookup for k2
+			.queueSelect([{ id: "k2" }]); // conditional last-use claim
 		// k1 verifies but has no user; k2 verifies and resolves
 		h.verifyApiKey.mockReturnValue(true);
 		h.parseScopes.mockReturnValue(["read"]);
 
 		const result = await authenticateApiKey(env, "Bearer ep_anothersecret");
-		expect(result).toEqual({ userId: "u2", email: "two@example.com", scopes: ["read"] });
+		expect(result).toEqual({ userId: "u2", email: "two@example.com", organizationId: undefined, scopes: ["read"] });
 		// lastUsedAt updated once for the successful candidate
 		expect(mock.updates).toHaveLength(1);
 		expect((mock.updates[0].set as Record<string, unknown>).lastUsedAt).toBeInstanceOf(Date);
@@ -68,17 +69,39 @@ describe("authenticateApiKey", () => {
 	it("authenticates a valid key and records last use", async () => {
 		mock
 			.queueSelect([{ id: "k1", keyHash: "hash1", userId: "u1", scopes: "json" }])
-			.queueSelect([{ id: "u1", email: "one@example.com" }]);
+			.queueSelect([{ id: "u1", email: "one@example.com" }])
+			.queueSelect([{ id: "k1" }]);
 		h.verifyApiKey.mockReturnValue(true);
 		h.parseScopes.mockReturnValue(["messages:read", "messages:write"]);
 
 		const result = await authenticateApiKey(env, "Bearer ep_validkey1234567");
-		expect(result).toEqual({
+			expect(result).toEqual({
 			userId: "u1",
 			email: "one@example.com",
+			organizationId: undefined,
 			scopes: ["messages:read", "messages:write"],
 		});
 		expect(h.parseScopes).toHaveBeenCalledWith("json");
+		expect(mock.updates).toHaveLength(1);
+	});
+
+	it("skips a revoked candidate defensively", async () => {
+		mock.queueSelect([
+			{ id: "k1", keyHash: "hash1", userId: "u1", revokedAt: new Date(), scopes: "[]" },
+		]);
+		h.verifyApiKey.mockReturnValue(true);
+		expect(await authenticateApiKey(env, "Bearer ep_revokedkeyvalue")).toBeNull();
+		expect(h.verifyApiKey).not.toHaveBeenCalled();
+		expect(mock.updates).toHaveLength(0);
+	});
+
+	it("fails authentication when revocation wins during key verification", async () => {
+		mock
+			.queueSelect([{ id: "k1", keyHash: "hash1", userId: "u1", revokedAt: null, scopes: "[]" }])
+			.queueSelect([{ id: "u1", email: "one@example.com" }])
+			.queueSelect([]); // conditional last-use claim observes revoked_at
+		h.verifyApiKey.mockReturnValue(true);
+		expect(await authenticateApiKey(env, "Bearer ep_revokedmidrequest")).toBeNull();
 		expect(mock.updates).toHaveLength(1);
 	});
 

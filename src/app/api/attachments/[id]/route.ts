@@ -4,6 +4,15 @@ import { getDb } from "@/db";
 import { attachments, messages } from "@/db/schema";
 import { guardUser } from "@/lib/auth/cookies";
 import { apiError } from "@/lib/api/response";
+import { messageAccessCondition } from "@/lib/auth/mailbox-access";
+
+const INLINE_CONTENT_TYPES = new Set([
+	"image/jpeg",
+	"image/png",
+	"image/gif",
+	"image/webp",
+	"application/pdf",
+]);
 
 export async function GET(
 	request: Request,
@@ -26,7 +35,7 @@ export async function GET(
 		})
 		.from(attachments)
 		.innerJoin(messages, eq(attachments.messageId, messages.id))
-		.where(and(eq(attachments.id, id), eq(messages.userId, user.id)))
+		.where(and(eq(attachments.id, id), messageAccessCondition(db, user.id, user.organizationId, "read")))
 		.limit(1);
 
 	if (!att) return apiError("Attachment not found", 404);
@@ -35,7 +44,9 @@ export async function GET(
 	if (!obj) return apiError("File not found", 404);
 
 	const url = new URL(request.url);
-	const inline = url.searchParams.get("disposition") === "inline";
+	const inline =
+		url.searchParams.get("disposition") === "inline" &&
+		INLINE_CONTENT_TYPES.has(att.contentType.trim().toLowerCase());
 
 	const headers = new Headers();
 	headers.set("Content-Type", att.contentType);
@@ -45,6 +56,13 @@ export async function GET(
 	);
 	headers.set("Content-Length", att.size.toString());
 	headers.set("Cache-Control", "private, max-age=3600");
+	headers.set("X-Content-Type-Options", "nosniff");
+	if (inline) {
+		headers.set(
+			"Content-Security-Policy",
+			"sandbox; default-src 'none'; img-src 'self' data:",
+		);
+	}
 
 	return new Response(obj.body, { headers });
 }

@@ -5,8 +5,39 @@ import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { authFetch } from "@/lib/auth/client";
+import { apiJson, ApiResponseError } from "@/lib/api/client-response";
 import type { ProfileFormProps, ProfileFormResponse } from "./types";
+
+type ProfileSaveResult =
+	| { ok: true; name: string; resetEmail: string }
+	| { ok: false; message: string };
+
+type ProfilePatch = (name: string, resetEmail: string) => Promise<ProfileFormResponse>;
+
+function patchProfile(name: string, resetEmail: string) {
+	return apiJson.patch<ProfileFormResponse>("/api/settings/profile", { name, resetEmail });
+}
+
+export async function saveProfile(
+	name: string,
+	resetEmail: string,
+	failureMessage: string,
+	request: ProfilePatch = patchProfile,
+): Promise<ProfileSaveResult> {
+	try {
+		const data = await request(name, resetEmail);
+		return {
+			ok: true,
+			name: data.user?.name ?? name.trim(),
+			resetEmail: data.user?.resetEmail ?? "",
+		};
+	} catch (error) {
+		return {
+			ok: false,
+			message: error instanceof ApiResponseError ? error.message : failureMessage,
+		};
+	}
+}
 
 export function ProfileForm({ initialName, initialResetEmail, email }: ProfileFormProps) {
 	const t = useTranslations("settings");
@@ -23,21 +54,15 @@ export function ProfileForm({ initialName, initialResetEmail, email }: ProfileFo
 		setLoading(true);
 		setStatus(null);
 
-		const res = await authFetch("/api/settings/profile", {
-			method: "PATCH",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ name, resetEmail }),
-		});
-		const data = (await res.json()) as ProfileFormResponse;
+		const result = await saveProfile(name, resetEmail, t("accountFailed"));
 		setLoading(false);
-
-		if (!res.ok) {
-			setStatus(typeof data.error === "string" ? data.error : t("accountFailed"));
+		if (!result.ok) {
+			setStatus(result.message);
 			return;
 		}
 
-		const nextName = data.user?.name ?? name.trim();
-		const nextResetEmail = data.user?.resetEmail ?? "";
+		const nextName = result.name;
+		const nextResetEmail = result.resetEmail;
 		setName(nextName);
 		setResetEmail(nextResetEmail);
 		setSavedName(nextName);
@@ -61,15 +86,15 @@ export function ProfileForm({ initialName, initialResetEmail, email }: ProfileFo
 					placeholder={t("recoveryPlaceholder")}
 				/>
 			</div>
-			<div className="space-y-1 rounded-md border border-neutral-200 bg-neutral-50 px-3 py-2">
+			<div className="space-y-1 rounded-md border border-border bg-surface-subtle px-3 py-2">
 				<Label>{t("accountEmail")}</Label>
-				<p className="text-sm text-neutral-700">{email}</p>
+				<p className="text-sm text-ink-muted">{email}</p>
 			</div>
 			<div className="flex items-center gap-3">
 				<Button type="submit" disabled={loading || !hasChanges}>
 					{loading ? t("saving") : t("save")}
 				</Button>
-				{status && <p className="text-sm text-neutral-500">{status}</p>}
+				{status && <p className="text-sm text-ink-muted">{status}</p>}
 			</div>
 		</form>
 	);

@@ -33,7 +33,7 @@ describe("POST /api/messages/[messageId]/read", () => {
 		m.markMessageAsRead.mockResolvedValue(false);
 		const res = await post();
 		expect(res.status).toBe(404);
-		expect(m.markMessageAsRead).toHaveBeenCalledWith({}, "u1", "m1");
+		expect(m.markMessageAsRead).toHaveBeenCalledWith({}, "u1", undefined, "m1");
 	});
 
 	it("marks the message as read", async () => {
@@ -41,6 +41,6 @@ describe("POST /api/messages/[messageId]/read", () => {
 		m.markMessageAsRead.mockResolvedValue(true);
 		const res = await post();
 		expect(res.status).toBe(200);
-		expect((await res.json()) as any).toEqual({ success: true });
+		expect((await res.json()) as any).toEqual({ success: true, data: { ok: true } });
 	});
 });

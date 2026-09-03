@@ -30,7 +30,7 @@ export default defineConfig({
 		setupFiles: [],
 		coverage: {
 			provider: "v8",
-			reporter: ["text", "html", "lcov"],
+			reporter: ["text", "html", "json", "lcov"],
 			reportsDirectory: "./coverage",
 			// Gate ALL logic files: every TS module under src/lib, every API route
 			// handler + colocated `utils.ts`, and component `*-utils.ts` helpers.
@@ -41,15 +41,13 @@ export default defineConfig({
 			include: ["src/lib/**/*.ts", "src/app/**/*.ts", "src/components/**/*-utils.ts"],
 			exclude: [
 				"**/*.d.ts",
+				// `src/app/**/*.ts` also matches TSX under Vitest's glob engine once a
+				// smoke test imports those views. UI is scored by the CRAP pass instead.
+				"**/*.tsx",
 				// Type-only module (no runtime statements).
 				"src/lib/email/providers/types.ts",
 				// Pure re-export barrel (no own executable statements to cover).
-				"src/app/(admin)/api-keys/utils.ts",
-				// ⚠️ KNOWN XSS BUG: DOMPurify + linkedom no-ops in this runtime and
-				// returns mail HTML UNSANITIZED (see src/lib/email/sanitize.ts header).
-				// Excluded until a Workers-verified sanitizer fix lands; cannot be
-				// honestly tested as correct. Tracked as a security TODO.
-				"src/lib/email/sanitize.ts",
+				"src/app/(settings)/(org)/api-keys/utils.ts",
 			],
 			thresholds: {
 				lines: 100,

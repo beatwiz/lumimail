@@ -1,0 +1,21 @@
+import { z } from "zod";
+import { withOrgAdmin } from "@/lib/api/handler";
+import { getDomainForUser, reconcileDomainSending } from "@/lib/domains/service";
+import { apiError, apiSuccess } from "@/lib/api/response";
+
+const requestSchema = z.object({ action: z.enum(["verify", "enable"]) });
+
+export const POST = withOrgAdmin<{ id: string }>(async ({ request, env, user, params }) => {
+	const domain = await getDomainForUser(env, user.organizationId, params.id);
+	if (!domain) return apiError("Not found", 404);
+
+	const body = await request.json().catch(() => null);
+	const parsed = requestSchema.safeParse(body);
+	if (!parsed.success) return apiError("Invalid sending action", 400, parsed.error.flatten());
+
+	try {
+		return apiSuccess(await reconcileDomainSending(env, domain, parsed.data.action));
+	} catch {
+		return apiError("Cloudflare could not verify Email Sending", 400);
+	}
+});

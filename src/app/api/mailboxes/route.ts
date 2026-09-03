@@ -1,18 +1,13 @@
-import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
-import { getEnv } from "@/lib/cloudflare";
 import { getDb } from "@/db";
-import { domains, mailboxes } from "@/db/schema";
-import { guardUser } from "@/lib/auth/cookies";
+import { domains, mailboxMemberships, mailboxes } from "@/db/schema";
+import { withOrgAdmin, withUser } from "@/lib/api/handler";
 import { newId } from "@/lib/ids";
 import { mailboxSchema } from "@/lib/validators";
 import { ensureEmailRoutingRuleToWorker } from "@/lib/cloudflare-api";
 import { apiSuccess, apiError } from "@/lib/api/response";
 
-export async function GET(request: Request) {
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
-	if (errorResponse) return errorResponse;
+export const GET = withUser(async ({ env, user }) => {
 	if (!user.organizationId) return apiError("No organization", 400);
 	const db = getDb(env);
 	const rows = await db
@@ -24,22 +19,26 @@ export async function GET(request: Request) {
 			displayName: mailboxes.displayName,
 			createdAt: mailboxes.createdAt,
 			hostname: domains.hostname,
+			role: mailboxMemberships.role,
 		})
 		.from(mailboxes)
 		.innerJoin(domains, eq(mailboxes.domainId, domains.id))
-		.where(eq(mailboxes.organizationId, user.organizationId!));
-	return NextResponse.json({
+		.innerJoin(mailboxMemberships, eq(mailboxMemberships.mailboxId, mailboxes.id))
+		.where(
+			and(
+				eq(mailboxes.organizationId, user.organizationId!),
+				eq(mailboxMemberships.userId, user.id),
+			),
+		);
+	return apiSuccess({
 		mailboxes: rows.map((row) => ({
 			...row,
 			isPrimary: `${row.localPart}@${row.hostname}` === user.email,
 		})),
 	});
-}
+});
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
-	if (errorResponse) return errorResponse;
+export const POST = withOrgAdmin(async ({ request, env, user: orgUser }) => {
 	const parsed = mailboxSchema.safeParse(await request.json());
 	if (!parsed.success) return apiError("Validation failed", 400, parsed.error.flatten());
 
@@ -49,7 +48,7 @@ export async function POST(request: Request) {
 		.from(domains)
 		.where(eq(domains.id, parsed.data.domainId))
 		.limit(1);
-	if (!domain || domain.organizationId !== user.organizationId) {
+	if (!domain || domain.organizationId !== orgUser.organizationId) {
 		return apiError("Domain not found", 404);
 	}
 
@@ -69,14 +68,22 @@ export async function POST(request: Request) {
 	}
 
 	const id = newId("mbx");
-	await db.insert(mailboxes).values({
-		id,
-		userId: user.id,
-		organizationId: user.organizationId!,
-		domainId: parsed.data.domainId,
-		localPart,
-		displayName: parsed.data.displayName,
-	});
+	await db.batch([
+		db.insert(mailboxes).values({
+			id,
+			userId: orgUser.id,
+			organizationId: orgUser.organizationId,
+			domainId: parsed.data.domainId,
+			localPart,
+			displayName: parsed.data.displayName,
+		}),
+		db.insert(mailboxMemberships).values({
+			id: newId("mbm"),
+			mailboxId: id,
+			userId: orgUser.id,
+			role: "manager",
+		}),
+	]);
 
 	return apiSuccess({ id, address });
-}
+});

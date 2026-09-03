@@ -20,6 +20,20 @@ export type OutboundMessage = {
 	subject: string;
 	html?: string;
 	text?: string;
+	/**
+	 * Extra headers to set on the outgoing message. Providers pass these through
+	 * verbatim, so callers are responsible for supplying only values they control —
+	 * threading headers derived from a stored message, or a fixed constant such as
+	 * the auto-reply markers. Never populate this from untrusted input.
+	 */
+	headers?: Record<string, string>;
+	attachments?: Array<{
+		filename: string;
+		contentType: string;
+		content: ArrayBuffer;
+		disposition?: "attachment" | "inline";
+		contentId?: string;
+	}>;
 };
 
 /** Normalized result of a successful send. */
@@ -27,6 +41,21 @@ export type OutboundSendResult = {
 	/** Provider-assigned message id, stored as `messages.providerMessageId`. */
 	providerMessageId: string;
 };
+
+export class OutboundProviderError extends Error {
+	readonly retryable: boolean;
+	readonly code?: string;
+
+	constructor(
+		message: string,
+		options: { retryable: boolean; code?: string; cause?: unknown },
+	) {
+		super(message, options.cause === undefined ? undefined : { cause: options.cause });
+		this.name = "OutboundProviderError";
+		this.retryable = options.retryable;
+		this.code = options.code;
+	}
+}
 
 /** A configured outbound provider ready to send a single message. */
 export interface OutboundProvider {

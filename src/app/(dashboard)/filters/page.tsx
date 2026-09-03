@@ -2,31 +2,39 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useTranslations } from "next-intl";
 import { Plus, Trash2, Filter } from "lucide-react";
-import { authFetch } from "@/lib/auth/client";
+import { apiJson } from "@/lib/api/client-response";
+import { labelKeys } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-type MessageFilter = {
-	id: string;
-	name: string;
-	fromContains: string | null;
-	toContains: string | null;
-	subjectContains: string | null;
-	hasWords: string | null;
-	actionStar: boolean;
-	actionMarkRead: boolean;
-	actionArchive: boolean;
-	actionLabelId: string | null;
-	actionMoveToTrash: boolean;
-	enabled: boolean;
-};
+import { fetchFilterLabels, fetchMessageFilters, type MessageFilter } from "./utils";
+import { Select } from "@/components/ui/select";
 
-type LabelRow = { id: string; name: string; color: string };
+function present(value: string | boolean | null | undefined, description: string) {
+	return value ? description : null;
+}
+
+function describeFilter(f: MessageFilter, t: ReturnType<typeof useTranslations>) {
+	const conds = [
+		present(f.fromContains, t("condFrom", { value: f.fromContains ?? "" })),
+		present(f.subjectContains, t("condSubject", { value: f.subjectContains ?? "" })),
+		present(f.toContains, t("condTo", { value: f.toContains ?? "" })),
+		present(f.hasWords, t("condWords", { value: f.hasWords ?? "" })),
+	].filter((value): value is string => value !== null);
+	const acts = [
+		present(f.actionStar, t("actStar")), present(f.actionMarkRead, t("actMarkRead")),
+		present(f.actionArchive, t("actArchive")), present(f.actionMoveToTrash, t("actTrash")),
+		present(f.actionLabelId, t("actLabel")),
+	].filter((value): value is string => value !== null);
+	return { conds, acts };
+}
 
 export default function FiltersPage() {
+	const t = useTranslations("filters");
 	const qc = useQueryClient();
 	const [name, setName] = useState("");
 	const [fromContains, setFromContains] = useState("");
@@ -39,39 +47,26 @@ export default function FiltersPage() {
 
 	const filters = useQuery({
 		queryKey: ["filters"],
-		queryFn: async () => {
-			const res = await authFetch("/api/filters");
-			const json = (await res.json()) as { success: boolean; data?: { filters: MessageFilter[] } };
-			return json.data?.filters ?? [];
-		},
+		queryFn: fetchMessageFilters,
 	});
 
 	const labels = useQuery({
-		queryKey: ["labels"],
-		queryFn: async () => {
-			const res = await authFetch("/api/labels");
-			const json = (await res.json()) as { success: boolean; data?: { labels: LabelRow[] } };
-			return json.data?.labels ?? [];
-		},
+		queryKey: labelKeys.all,
+		queryFn: fetchFilterLabels,
 	});
 
 	const create = useMutation({
 		mutationFn: async () => {
-			const res = await authFetch("/api/filters", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					name: name || "My filter",
-					fromContains: fromContains || undefined,
-					subjectContains: subjectContains || undefined,
-					actionStar,
-					actionMarkRead,
-					actionArchive,
-					actionLabelId: actionLabelId || undefined,
-					actionMoveToTrash,
-				}),
+			await apiJson.post<{ id: string }>("/api/filters", {
+				name: name || t("defaultName"),
+				fromContains: fromContains || undefined,
+				subjectContains: subjectContains || undefined,
+				actionStar,
+				actionMarkRead,
+				actionArchive,
+				actionLabelId: actionLabelId || undefined,
+				actionMoveToTrash,
 			});
-			if (!res.ok) throw new Error("Failed");
 		},
 		onSuccess: () => {
 			qc.invalidateQueries({ queryKey: ["filters"] });
@@ -88,61 +83,45 @@ export default function FiltersPage() {
 
 	const remove = useMutation({
 		mutationFn: async (id: string) => {
-			const res = await authFetch(`/api/filters/${id}`, { method: "DELETE" });
-			if (!res.ok) throw new Error("Failed");
+			await apiJson.delete<{ ok: true }>(`/api/filters/${id}`);
 		},
 		onSuccess: () => qc.invalidateQueries({ queryKey: ["filters"] }),
 	});
 
-	const describeFilter = (f: MessageFilter) => {
-		const conds: string[] = [];
-		if (f.fromContains) conds.push(`from contains "${f.fromContains}"`);
-		if (f.subjectContains) conds.push(`subject contains "${f.subjectContains}"`);
-		if (f.toContains) conds.push(`to contains "${f.toContains}"`);
-		if (f.hasWords) conds.push(`has words "${f.hasWords}"`);
-		const acts: string[] = [];
-		if (f.actionStar) acts.push("star it");
-		if (f.actionMarkRead) acts.push("mark as read");
-		if (f.actionArchive) acts.push("archive it");
-		if (f.actionMoveToTrash) acts.push("move to trash");
-		if (f.actionLabelId) acts.push("apply label");
-		return { conds, acts };
-	};
-
 	return (
-		<div className="space-y-6 max-w-2xl">
-			<h1 className="text-2xl font-normal text-neutral-900">Filters</h1>
-			<p className="text-sm text-neutral-500">
-				Filters automatically apply actions to incoming messages that match your conditions.
+		<div className="max-w-2xl space-y-6 px-4 py-6 sm:px-12 sm:py-8">
+			<h1 className="text-2xl font-semibold text-ink">{t("title")}</h1>
+			<p className="text-sm text-ink-muted">
+				{t("desc")}
 			</p>
 
 			<Card>
 				<CardHeader>
-					<CardTitle>Create filter</CardTitle>
+					<CardTitle>{t("createTitle")}</CardTitle>
 				</CardHeader>
 				<CardContent className="space-y-4">
 					<div className="space-y-2">
-						<Label>Filter name</Label>
-						<Input placeholder="e.g. Newsletter auto-archive" value={name} onChange={(e) => setName(e.target.value)} />
+						<Label>{t("nameLabel")}</Label>
+						<Input placeholder={t("namePlaceholder")} value={name} onChange={(e) => setName(e.target.value)} />
 					</div>
-					<div className="text-sm font-medium text-neutral-700 mt-2">Conditions (messages matching any)</div>
-					<div className="grid grid-cols-2 gap-4">
+					<div className="text-sm font-medium text-ink-muted mt-2">{t("conditionsHeading")}</div>
+					<div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
 						<div className="space-y-2">
-							<Label>From contains</Label>
-							<Input placeholder="newsletter@" value={fromContains} onChange={(e) => setFromContains(e.target.value)} />
+							<Label>{t("fromContains")}</Label>
+							<Input placeholder={t("fromPlaceholder")} value={fromContains} onChange={(e) => setFromContains(e.target.value)} />
 						</div>
 						<div className="space-y-2">
-							<Label>Subject contains</Label>
-							<Input placeholder="unsubscribe" value={subjectContains} onChange={(e) => setSubjectContains(e.target.value)} />
+							<Label>{t("subjectContains")}</Label>
+							<Input placeholder={t("subjectPlaceholder")} value={subjectContains} onChange={(e) => setSubjectContains(e.target.value)} />
 						</div>
 					</div>
-					<div className="text-sm font-medium text-neutral-700 mt-2">Actions</div>
+					<div className="text-sm font-medium text-ink-muted mt-2">{t("actionsHeading")}</div>
 					<div className="space-y-2">
 						{[
-							{ label: "Star it", checked: actionStar, onChange: setActionStar },
-							{ label: "Mark as read", checked: actionMarkRead, onChange: setActionMarkRead },
-							{ label: "Archive (skip inbox)", checked: actionArchive, onChange: setActionArchive },
-							{ label: "Move to trash", checked: actionMoveToTrash, onChange: setActionMoveToTrash },
+							{ label: t("actionStar"), checked: actionStar, onChange: setActionStar },
+							{ label: t("actionMarkRead"), checked: actionMarkRead, onChange: setActionMarkRead },
+							{ label: t("actionArchive"), checked: actionArchive, onChange: setActionArchive },
+							{ label: t("actionMoveToTrash"), checked: actionMoveToTrash, onChange: setActionMoveToTrash },
 						].map(({ label, checked, onChange }) => (
 							<label key={label} className="flex items-center gap-2 text-sm cursor-pointer">
 								<input
@@ -155,48 +134,47 @@ export default function FiltersPage() {
 							</label>
 						))}
 						<div className="space-y-2">
-							<Label>Apply label</Label>
-							<select
-								className="w-full h-10 rounded-md border border-neutral-200 px-3 text-sm"
+							<Label>{t("applyLabel")}</Label>
+							<Select
 								value={actionLabelId}
 								onChange={(e) => setActionLabelId(e.target.value)}
 							>
-								<option value="">— none —</option>
+								<option value="">{t("noneOption")}</option>
 								{(labels.data ?? []).map((l) => (
 									<option key={l.id} value={l.id}>{l.name}</option>
 								))}
-							</select>
+							</Select>
 						</div>
 					</div>
 					<Button onClick={() => create.mutate()} disabled={create.isPending}>
 						<Plus className="h-4 w-4 mr-2" />
-						Create filter
+						{t("createTitle")}
 					</Button>
 				</CardContent>
 			</Card>
 
 			<Card>
 				<CardHeader>
-					<CardTitle>Active filters</CardTitle>
+					<CardTitle>{t("activeTitle")}</CardTitle>
 				</CardHeader>
 				<CardContent>
 					{(filters.data ?? []).length === 0 ? (
-						<p className="text-sm text-neutral-400">No filters yet.</p>
+						<p className="text-sm text-ink-faint">{t("empty")}</p>
 					) : (
-						<ul className="divide-y divide-neutral-100">
+						<ul className="divide-y divide-border">
 							{(filters.data ?? []).map((f) => {
-								const { conds, acts } = describeFilter(f);
+								const { conds, acts } = describeFilter(f, t);
 								return (
 									<li key={f.id} className="flex items-start justify-between py-3 gap-4">
 										<div className="flex items-start gap-3 text-sm min-w-0">
-											<Filter className="h-4 w-4 text-neutral-400 mt-0.5 shrink-0" />
+											<Filter className="h-4 w-4 text-ink-faint mt-0.5 shrink-0" />
 											<div className="min-w-0">
 												<div className="font-medium">{f.name}</div>
-												<div className="text-xs text-neutral-500 mt-1">
-													{conds.length > 0 ? `If: ${conds.join(", ")}` : "Always matches"}
+												<div className="text-xs text-ink-muted mt-1">
+													{conds.length > 0 ? t("ifPrefix", { conditions: conds.join(", ") }) : t("alwaysMatches")}
 												</div>
-												<div className="text-xs text-neutral-500">
-													Then: {acts.length > 0 ? acts.join(", ") : "no action"}
+												<div className="text-xs text-ink-muted">
+													{t("thenPrefix", { actions: acts.length > 0 ? acts.join(", ") : t("noAction") })}
 												</div>
 											</div>
 										</div>
@@ -204,7 +182,7 @@ export default function FiltersPage() {
 											variant="ghost"
 											size="sm"
 											onClick={() => remove.mutate(f.id)}
-											className="text-red-500 hover:text-red-700 shrink-0"
+											className="text-danger hover:text-danger shrink-0"
 										>
 											<Trash2 className="h-4 w-4" />
 										</Button>

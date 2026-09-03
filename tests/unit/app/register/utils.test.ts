@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("@/lib/auth/client", () => ({ persistAuthSession: vi.fn() }));
+const { persistAuthSession } = vi.hoisted(() => ({ persistAuthSession: vi.fn() }));
+vi.mock("@/lib/auth/client", () => ({ persistAuthSession }));
 
 import { getInviteInfo, getSetupStatus, submitPrimaryDomain, submitRegistration } from "@/app/register/utils";
 
@@ -9,13 +10,11 @@ function jsonResponse(ok: boolean, body: unknown) {
 }
 
 let fetchMock: ReturnType<typeof vi.fn>;
-let storage: { setItem: ReturnType<typeof vi.fn> };
-
 beforeEach(() => {
 	fetchMock = vi.fn();
 	vi.stubGlobal("fetch", fetchMock);
-	storage = { setItem: vi.fn() };
-	vi.stubGlobal("localStorage", storage);
+	persistAuthSession.mockReset();
+	persistAuthSession.mockImplementation(async (response: Response) => response.json());
 });
 
 afterEach(() => {
@@ -34,14 +33,14 @@ describe("getSetupStatus", () => {
 
 describe("submitPrimaryDomain", () => {
 	it("posts the domain from the form (ok=true)", async () => {
-		const body = { redirect: "/onboarding" };
-		fetchMock.mockResolvedValue(jsonResponse(true, body));
+		const domain = { hostname: "example.com" };
+		fetchMock.mockResolvedValue(jsonResponse(true, { success: true, data: { domain } }));
 		const form = new FormData();
 		form.set("domain", "example.com");
 
 		const result = await submitPrimaryDomain(form);
 
-		expect(result).toEqual({ ok: true, data: body });
+		expect(result).toEqual({ ok: true, data: { domain } });
 		expect(fetchMock).toHaveBeenCalledWith("/api/setup/domain", {
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
@@ -50,10 +49,23 @@ describe("submitPrimaryDomain", () => {
 	});
 
 	it("reports ok=false when the request fails", async () => {
-		fetchMock.mockResolvedValue(jsonResponse(false, { error: "bad" }));
+		fetchMock.mockResolvedValue(jsonResponse(false, { success: false, error: { message: "bad" } }));
 		const result = await submitPrimaryDomain(new FormData());
 		expect(result.ok).toBe(false);
 		expect(result.data).toEqual({ error: "bad" });
+	});
+
+	it("handles a successful response without domain data", async () => {
+		fetchMock.mockResolvedValue(jsonResponse(true, { success: true }));
+		await expect(submitPrimaryDomain(new FormData())).resolves.toEqual({ ok: true, data: {} });
+	});
+
+	it("handles a failed response without an error message", async () => {
+		fetchMock.mockResolvedValue(jsonResponse(false, { success: false }));
+		await expect(submitPrimaryDomain(new FormData())).resolves.toEqual({
+			ok: false,
+			data: { error: undefined },
+		});
 	});
 });
 
@@ -66,8 +78,9 @@ describe("submitRegistration", () => {
 		return f;
 	}
 
-	it("includes the domain in the body on first run and stores the token", async () => {
-		fetchMock.mockResolvedValue(jsonResponse(true, { token: "tok", redirect: "/inbox" }));
+	it("includes the domain in the body on first run and persists the authenticated session", async () => {
+		const response = jsonResponse(true, { token: "tok", redirect: "/inbox" });
+		fetchMock.mockResolvedValue(response);
 
 		const result = await submitRegistration(form(), {
 			firstRun: true,
@@ -85,11 +98,11 @@ describe("submitRegistration", () => {
 				resetEmail: "alice@example.com",
 			}),
 		});
-		expect(storage.setItem).toHaveBeenCalledWith("lumimail-session-token", "tok");
+		expect(persistAuthSession).toHaveBeenCalledWith(response);
 		expect(result).toEqual({ ok: true, data: { redirect: "/inbox", error: undefined } });
 	});
 
-	it("omits the domain when not first run and includes the invite token", async () => {
+	it("binds invite registration to the token without sending a client-selected username", async () => {
 		fetchMock.mockResolvedValue(jsonResponse(true, {}));
 
 		await submitRegistration(form(), {
@@ -100,14 +113,13 @@ describe("submitRegistration", () => {
 
 		const sentBody = JSON.parse(fetchMock.mock.calls[0][1].body);
 		expect(sentBody).toEqual({
-			username: "alice",
 			password: "secret",
 			resetEmail: "alice@example.com",
 			inviteToken: "inv_1",
 		});
 	});
 
-	it("does not store a token when the response is not ok", async () => {
+	it("delegates failed responses without establishing a session", async () => {
 		fetchMock.mockResolvedValue(jsonResponse(false, { token: "tok", error: "nope" }));
 
 		const result = await submitRegistration(form(), {
@@ -116,11 +128,11 @@ describe("submitRegistration", () => {
 			inviteToken: null,
 		});
 
-		expect(storage.setItem).not.toHaveBeenCalled();
+		expect(persistAuthSession).toHaveBeenCalledTimes(1);
 		expect(result).toEqual({ ok: false, data: { redirect: undefined, error: "nope" } });
 	});
 
-	it("does not store a token when token is not a string", async () => {
+	it("ignores non-string redirect and token fields", async () => {
 		fetchMock.mockResolvedValue(jsonResponse(true, { token: 123, redirect: 456 }));
 
 		const result = await submitRegistration(form(), {
@@ -129,19 +141,8 @@ describe("submitRegistration", () => {
 			inviteToken: null,
 		});
 
-		expect(storage.setItem).not.toHaveBeenCalled();
+		expect(persistAuthSession).toHaveBeenCalledTimes(1);
 		expect(result.data).toEqual({ redirect: undefined, error: undefined });
-	});
-
-	it("swallows localStorage errors when storing the token", async () => {
-		storage.setItem.mockImplementation(() => {
-			throw new Error("denied");
-		});
-		fetchMock.mockResolvedValue(jsonResponse(true, { token: "tok" }));
-
-		await expect(
-			submitRegistration(form(), { firstRun: false, domain: "x", inviteToken: null }),
-		).resolves.toEqual({ ok: true, data: { redirect: undefined, error: undefined } });
 	});
 });
 

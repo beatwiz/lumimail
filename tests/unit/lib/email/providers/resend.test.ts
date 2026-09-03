@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createResendProvider } from "@/lib/email/providers/resend";
+import { OutboundProviderError } from "@/lib/email/providers/types";
 
 const message = {
 	from: "agent@example.com",
@@ -30,8 +31,19 @@ describe("createResendProvider", () => {
 		vi.unstubAllGlobals();
 	});
 
-	it("throws when RESEND_API_KEY is missing", () => {
-		expect(() => createResendProvider({} as CloudflareEnv)).toThrow(/RESEND_API_KEY is required/);
+	it("throws a retryable provider error when RESEND_API_KEY is missing", () => {
+		let thrown: unknown;
+		try {
+			createResendProvider({} as CloudflareEnv);
+		} catch (error) {
+			thrown = error;
+		}
+		// A missing key mid-deploy is a config error, not a permanent send
+		// failure — queued jobs must retry rather than finalize as failed.
+		expect(thrown).toBeInstanceOf(OutboundProviderError);
+		expect((thrown as OutboundProviderError).retryable).toBe(true);
+		expect((thrown as OutboundProviderError).code).toBe("PROVIDER_CONFIG");
+		expect((thrown as Error).message).toMatch(/RESEND_API_KEY is required/);
 	});
 
 	it("exposes the resend id", () => {
@@ -73,17 +85,107 @@ describe("createResendProvider", () => {
 		expect(fetchMock.mock.calls[0][0]).toBe("https://proxy.internal/resend/emails");
 	});
 
-	it("throws with status and body when the API returns a non-2xx response", async () => {
+	it("classifies a 4xx response as permanent without storing the response body", async () => {
 		fetchMock.mockResolvedValue(jsonResponse("domain not verified", { ok: false, status: 422 }));
 		const provider = createResendProvider({ RESEND_API_KEY: "re_secret" } as CloudflareEnv);
 
-		await expect(provider.send(message)).rejects.toThrow("Resend send failed (422): domain not verified");
+		await expect(provider.send(message)).rejects.toMatchObject({
+			message: "Resend send failed (422)",
+			code: "HTTP_422",
+			retryable: false,
+		});
 	});
 
-	it("throws when the success response has no id", async () => {
+	it("maps inline image content IDs into the Resend payload", async () => {
+		fetchMock.mockResolvedValue(jsonResponse({ id: "re-inline" }));
+		const provider = createResendProvider({ RESEND_API_KEY: "re_secret" } as CloudflareEnv);
+		await provider.send({
+			...message,
+			attachments: [{
+				filename: "chart.png",
+				contentType: "image/png",
+				content: new Uint8Array([1]).buffer,
+				disposition: "inline",
+				contentId: "chart_1",
+			}],
+		});
+		const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(payload.attachments).toEqual([expect.objectContaining({
+			filename: "chart.png",
+			content_id: "chart_1",
+		})]);
+	});
+
+	it("encodes attachment bytes as base64", async () => {
+		fetchMock.mockResolvedValue(jsonResponse({ id: "re-att" }));
+		const provider = createResendProvider({ RESEND_API_KEY: "re_secret" } as CloudflareEnv);
+
+		await provider.send({
+			...message,
+			attachments: [{
+				filename: "report.txt",
+				contentType: "text/plain",
+				content: new TextEncoder().encode("hello").buffer,
+			}],
+		});
+
+		const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+		expect(body.attachments).toEqual([{
+			filename: "report.txt",
+			content_type: "text/plain",
+			content: "aGVsbG8=",
+		}]);
+	});
+
+	it("posts RFC reply headers", async () => {
+		fetchMock.mockResolvedValue(jsonResponse({ id: "re-reply" }));
+		const provider = createResendProvider({ RESEND_API_KEY: "re_secret" } as CloudflareEnv);
+
+		await provider.send({
+			...message,
+			headers: {
+				"In-Reply-To": "<parent@example.com>",
+				References: "<root@example.com> <parent@example.com>",
+			},
+		});
+
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body).headers).toEqual({
+			"In-Reply-To": "<parent@example.com>",
+			References: "<root@example.com> <parent@example.com>",
+		});
+	});
+
+	it.each([429, 500, 503])("classifies HTTP %s as retryable", async (status) => {
+		fetchMock.mockResolvedValue(jsonResponse("temporary detail", { ok: false, status }));
+		const provider = createResendProvider({ RESEND_API_KEY: "re_secret" } as CloudflareEnv);
+
+		await expect(provider.send(message)).rejects.toMatchObject({
+			code: `HTTP_${status}`,
+			retryable: true,
+		});
+	});
+
+	it("classifies a network failure as retryable", async () => {
+		fetchMock.mockRejectedValue(new TypeError("fetch failed"));
+		const provider = createResendProvider({ RESEND_API_KEY: "re_secret" } as CloudflareEnv);
+
+		const promise = provider.send(message);
+		await expect(promise).rejects.toBeInstanceOf(OutboundProviderError);
+		await expect(promise).rejects.toMatchObject({
+			message: "Resend network request failed",
+			code: "NETWORK_ERROR",
+			retryable: true,
+		});
+	});
+
+	it("treats a malformed success response as permanent", async () => {
 		fetchMock.mockResolvedValue(jsonResponse({}));
 		const provider = createResendProvider({ RESEND_API_KEY: "re_secret" } as CloudflareEnv);
 
-		await expect(provider.send(message)).rejects.toThrow(/did not include a message id/);
+		await expect(provider.send(message)).rejects.toMatchObject({
+			message: "Resend send failed: response did not include a message id",
+			code: "INVALID_RESPONSE",
+			retryable: false,
+		});
 	});
 });

@@ -36,11 +36,24 @@ afterEach(() => {
 });
 
 describe("fetchMessageDetail", () => {
-	it("fetches and returns the parsed JSON body", async () => {
+	it("fetches and unwraps the enveloped payload", async () => {
 		const body = { message: { id: "m1" } };
-		authFetch.mockResolvedValue({ json: async () => body } as unknown as Response);
+		authFetch.mockResolvedValue({
+			ok: true,
+			status: 200,
+			json: async () => ({ success: true, data: body }),
+		} as unknown as Response);
 		await expect(fetchMessageDetail("m1")).resolves.toBe(body);
 		expect(authFetch).toHaveBeenCalledWith("/api/messages/m1");
+	});
+
+	it("maps an error response into the inline-error shape", async () => {
+		authFetch.mockResolvedValue({
+			ok: false,
+			status: 404,
+			json: async () => ({ error: "Not found" }),
+		} as unknown as Response);
+		await expect(fetchMessageDetail("m1")).resolves.toEqual({ error: "Not found" });
 	});
 });
 
@@ -104,14 +117,15 @@ describe("getMessageBodyDisplay", () => {
 		expect(splitRepliedEmailContent).toHaveBeenCalledWith("");
 	});
 
-	it("nulls out htmlBody and flags quoted content when quotes exist", () => {
+	it("keeps sanitized html as the single display source when the text alternative contains quotes", () => {
 		splitRepliedEmailContent.mockReturnValue({
 			latestContent: "latest",
 			quotedContent: [{ dateLine: "d", content: "c" }],
 		});
 		const result = getMessageBodyDisplay("text", "<p>html</p>", null);
-		expect(result.htmlBody).toBeNull();
-		expect(result.hasQuotedContent).toBe(true);
+		expect(result.htmlBody).toBe("<p>html</p>");
+		expect(result.quotedContent).toEqual([]);
+		expect(result.hasQuotedContent).toBe(false);
 	});
 
 	it("defaults htmlBody to null when no html and no quotes", () => {

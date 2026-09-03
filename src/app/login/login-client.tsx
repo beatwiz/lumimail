@@ -3,13 +3,13 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { ArrowRight, Mail } from "lucide-react";
+import { ArrowRight } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { AuthShell } from "@/components/auth/auth-shell";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { submitLogin } from "./utils";
+import { resolveLoginRedirect, submitLogin } from "./utils";
 
 export function LoginClient() {
   const t = useTranslations("auth");
@@ -28,12 +28,11 @@ export function LoginClient() {
       setError(data.error ?? t("loginFailed"));
       return;
     }
-    router.push(data.redirect ?? "/inbox");
+    router.push(resolveLoginRedirect(data.redirect, globalThis.location.search));
   }
 
   return (
     <AuthShell
-      icon={Mail}
       title={t("signIn")}
       description={t("signInDesc")}
       footer={
@@ -58,7 +57,12 @@ export function LoginClient() {
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="password">{t("password")}</Label>
+          <div className="flex items-center justify-between gap-4">
+            <Label htmlFor="password">{t("password")}</Label>
+            <Link href="/forgot-password" className="text-sm font-medium text-accent hover:underline">
+              Forgot password?
+            </Link>
+          </div>
           <Input
             id="password"
             name="password"
@@ -68,7 +72,7 @@ export function LoginClient() {
           />
         </div>
         {error && (
-          <p className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          <p className="rounded-2xl border border-danger/30 bg-danger-muted px-4 py-3 text-sm font-medium text-danger">
             {error}
           </p>
         )}

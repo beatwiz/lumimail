@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 290 336">
+  <defs>
+    <mask id="boundary"><image width="290" height="336" href="picket-mark-boundary-mask.png"/></mask>
+    <mask id="signal"><image width="290" height="336" href="picket-mark-signal-mask.png"/></mask>
+  </defs>
+  <rect width="290" height="336" fill="#0D1524" mask="url(#boundary)"/>
+  <rect width="290" height="336" fill="#E06A3B" mask="url(#signal)"/>
+</svg>

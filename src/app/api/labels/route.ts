@@ -1,23 +1,13 @@
-import { NextResponse } from "next/server";
-import { eq, and } from "drizzle-orm";
-import { z } from "zod";
-import { getEnv } from "@/lib/cloudflare";
-import { guardUser } from "@/lib/auth/cookies";
+import { and, eq } from "drizzle-orm";
 import { getDb } from "@/db";
 import { labels } from "@/db/schema";
+import { withUser } from "@/lib/api/handler";
 import { newId } from "@/lib/ids";
-import { apiSuccess, apiError } from "@/lib/api/response";
+import { apiSuccess, apiError, parseJsonBody } from "@/lib/api/response";
+import { createLabelSchema } from "@/lib/validators";
+import { getLabelParentError } from "./utils";
 
-const createLabelSchema = z.object({
-	name: z.string().min(1).max(50),
-	color: z.string().regex(/^#[0-9a-fA-F]{6}$/).optional(),
-});
-
-export async function GET(request: Request) {
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
-	if (errorResponse) return errorResponse;
-
+export const GET = withUser(async ({ env, user }) => {
 	const db = getDb(env);
 	const rows = await db
 		.select()
@@ -26,27 +16,28 @@ export async function GET(request: Request) {
 		.orderBy(labels.createdAt);
 
 	return apiSuccess(rows);
-}
+});
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
+export const POST = withUser(async ({ request, env, user }) => {
+	const { data, errorResponse } = await parseJsonBody(request, createLabelSchema);
 	if (errorResponse) return errorResponse;
 
-	let body: unknown;
-	try {
-		body = await request.json();
-	} catch {
-		return apiError("Invalid JSON", 400);
-	}
-
-	const parsed = createLabelSchema.safeParse(body);
-	/* v8 ignore next -- a Zod failure always carries an issue; the ?? fallback is defensive */
-	if (!parsed.success) return apiError(parsed.error.issues[0]?.message ?? "Invalid input", 400);
-
-	const { name, color } = parsed.data;
+	const { name, color, parentId } = data;
 
 	const db = getDb(env);
+
+	if (parentId) {
+		const parent = await db
+			.select({ id: labels.id, parentId: labels.parentId })
+			.from(labels)
+			.where(and(eq(labels.id, parentId), eq(labels.userId, user.id)))
+			.get();
+
+		// A new label has no children of its own yet, so that rule cannot apply.
+		const parentError = getLabelParentError({ parentId, parent: parent ?? null, hasChildren: false });
+		if (parentError) return apiError(parentError.message, parentError.status);
+	}
+
 	const [label] = await db
 		.insert(labels)
 		.values({
@@ -54,9 +45,10 @@ export async function POST(request: Request) {
 			userId: user.id,
 			organizationId: user.organizationId ?? null,
 			name,
-			color: color ?? "#6366f1",
+			color,
+			parentId: parentId ?? null,
 		})
 		.returning();
 
-	return NextResponse.json({ success: true, data: label }, { status: 201 });
-}
+	return apiSuccess(label, 201);
+});

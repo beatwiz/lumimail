@@ -1,30 +1,33 @@
-import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
-import { getEnv } from "@/lib/cloudflare";
+import { z } from "zod";
 import { getDb } from "@/db";
 import { messageBodies, messages } from "@/db/schema";
-import { guardUser } from "@/lib/auth/cookies";
+import { withUser } from "@/lib/api/handler";
+import { apiSuccess, parseJsonBody } from "@/lib/api/response";
 import { newId } from "@/lib/ids";
 import { buildSnippet } from "@/lib/email/parse";
+import { messageAccessCondition } from "@/lib/auth/mailbox-access";
+import { normalizeAuthoredContent } from "@/lib/email/authored-content";
+import { validateDraftInput, normalizedReplySourceId } from "@/lib/drafts/validate";
 
-type DraftPayload = {
-	mailboxId?: string | null;
-	from?: string;
-	to?: string;
-	subject?: string;
-	text?: string;
-	html?: string;
-};
+// `replyToMessageId` stays unknown so validateDraftInput can answer the
+// historical bare `{ error: "Invalid reply source" }` 400 for bad shapes.
+const draftPayloadSchema = z.object({
+	mailboxId: z.string().nullish(),
+	from: z.string().optional(),
+	to: z.string().optional(),
+	subject: z.string().optional(),
+	text: z.string().optional(),
+	html: z.string().optional(),
+	replyToMessageId: z.unknown().optional(),
+});
 
-export async function GET(request: Request) {
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
-	if (errorResponse) return errorResponse;
+export const GET = withUser(async ({ request, env, user }) => {
 	const url = new URL(request.url);
 	const mailboxId = url.searchParams.get("mailboxId");
 	const db = getDb(env);
 	const conditions = [
-		eq(messages.userId, user.id),
+		messageAccessCondition(db, user.id, user.organizationId, "send"),
 		eq(messages.direction, "outbound" as const),
 		eq(messages.status, "draft"),
 	];
@@ -37,38 +40,40 @@ export async function GET(request: Request) {
 		.orderBy(desc(messages.createdAt))
 		.limit(100);
 
-	return NextResponse.json({ drafts: rows });
-}
+	return apiSuccess({ drafts: rows });
+});
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
+export const POST = withUser(async ({ request, env, user }) => {
+	const { data: input, errorResponse } = await parseJsonBody(request, draftPayloadSchema);
 	if (errorResponse) return errorResponse;
-	const input = (await request.json()) as DraftPayload;
 	const db = getDb(env);
+	const invalid = await validateDraftInput(db, user, input);
+	if (invalid) return invalid;
+
 	const draftId = newId("msg");
-	const text = input.text ?? "";
-	const html = input.html ?? "";
+	const content = normalizeAuthoredContent(input);
 
 	await db.insert(messages).values({
 		id: draftId,
 		userId: user.id,
+		organizationId: input.mailboxId ? user.organizationId : null,
 		mailboxId: input.mailboxId ?? null,
 		direction: "outbound",
 		fromAddr: input.from ?? "",
 		toAddr: input.to ?? "",
 		subject: input.subject ?? null,
-		snippet: buildSnippet(text || null, html || null),
+		snippet: buildSnippet(content.text, content.html),
 		status: "draft",
 		read: true,
+		replySourceMessageId: normalizedReplySourceId(input),
 	});
 
 	await db.insert(messageBodies).values({
 		id: newId(),
 		messageId: draftId,
-		textBody: text || null,
-		htmlBody: html || null,
+		textBody: content.text,
+		htmlBody: content.html,
 	});
 
-	return NextResponse.json({ draft: { id: draftId } });
-}
+	return apiSuccess({ draft: { id: draftId } });
+});

@@ -1,4 +1,10 @@
-import type { OutboundMessage, OutboundProvider, OutboundSendResult } from "./types";
+import {
+	OutboundProviderError,
+	type OutboundMessage,
+	type OutboundProvider,
+	type OutboundSendResult,
+} from "./types";
+import { encodeBase64Attachment } from "@/lib/email/outbound-attachments";
 
 const DEFAULT_BASE_URL = "https://api.resend.com";
 
@@ -19,36 +25,69 @@ type ResendSuccess = { id?: string };
 export function createResendProvider(env: CloudflareEnv): OutboundProvider {
 	const apiKey = env.RESEND_API_KEY;
 	if (!apiKey) {
-		throw new Error("RESEND_API_KEY is required when MAIL_PROVIDER=resend");
+		// Retryable: a key missing mid-deploy is a config error; queued jobs
+		// must re-queue (bounded by queue retry/DLQ) instead of failing.
+		throw new OutboundProviderError("RESEND_API_KEY is required when MAIL_PROVIDER=resend", {
+			retryable: true,
+			code: "PROVIDER_CONFIG",
+		});
 	}
 	const baseUrl = (env.RESEND_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
 
 	return {
 		id: "resend",
 		async send(message: OutboundMessage): Promise<OutboundSendResult> {
-			const response = await fetch(`${baseUrl}/emails`, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${apiKey}`,
-					"Content-Type": "application/json",
-				},
-				body: JSON.stringify({
-					from: message.from,
-					to: [message.to],
-					subject: message.subject,
-					html: message.html,
-					text: message.text,
-				}),
-			});
+			let response: Response;
+			try {
+				response = await fetch(`${baseUrl}/emails`, {
+					method: "POST",
+					headers: {
+						Authorization: `Bearer ${apiKey}`,
+						"Content-Type": "application/json",
+					},
+					body: JSON.stringify({
+						from: message.from,
+						to: [message.to],
+						subject: message.subject,
+						html: message.html,
+						text: message.text,
+						...(message.headers ? { headers: message.headers } : {}),
+						...(message.attachments?.length
+							? {
+								attachments: message.attachments.map((attachment) => ({
+									filename: attachment.filename,
+									content_type: attachment.contentType,
+									content: encodeBase64Attachment(attachment.content),
+									...(attachment.disposition === "inline" && attachment.contentId
+										? { content_id: attachment.contentId }
+										: {}),
+								})),
+							}
+							: {}),
+					}),
+				});
+			} catch (error) {
+				throw new OutboundProviderError("Resend network request failed", {
+					code: "NETWORK_ERROR",
+					retryable: true,
+					cause: error,
+				});
+			}
 
 			if (!response.ok) {
-				const detail = await response.text();
-				throw new Error(`Resend send failed (${response.status}): ${detail}`);
+				const retryable = response.status === 429 || response.status >= 500;
+				throw new OutboundProviderError(`Resend send failed (${response.status})`, {
+					code: `HTTP_${response.status}`,
+					retryable,
+				});
 			}
 
 			const data = (await response.json()) as ResendSuccess;
 			if (!data.id) {
-				throw new Error("Resend send failed: response did not include a message id");
+				throw new OutboundProviderError(
+					"Resend send failed: response did not include a message id",
+					{ code: "INVALID_RESPONSE", retryable: false },
+				);
 			}
 			return { providerMessageId: data.id };
 		},

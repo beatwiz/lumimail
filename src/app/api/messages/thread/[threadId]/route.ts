@@ -1,22 +1,12 @@
 import { eq, and, asc } from "drizzle-orm";
-import { NextResponse } from "next/server";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
+import { withUser } from "@/lib/api/handler";
+import { apiSuccess } from "@/lib/api/response";
 import { getDb } from "@/db";
 import { messages, messageBodies } from "@/db/schema";
+import { messageAccessCondition } from "@/lib/auth/mailbox-access";
 
-type ThreadRouteParams = {
-	params: Promise<{ threadId: string }>;
-};
-
-export async function GET(request: Request, { params }: ThreadRouteParams) {
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) {
-		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-	}
-
-	const { threadId } = await params;
+export const GET = withUser<{ threadId: string }>(async ({ env, user, params }) => {
+	const { threadId } = params;
 
 	const db = getDb(env);
 	const rows = await db
@@ -40,8 +30,8 @@ export async function GET(request: Request, { params }: ThreadRouteParams) {
 		})
 		.from(messages)
 		.leftJoin(messageBodies, eq(messageBodies.messageId, messages.id))
-		.where(and(eq(messages.threadId, threadId), eq(messages.userId, user.id)))
+		.where(and(eq(messages.threadId, threadId), messageAccessCondition(db, user.id, user.organizationId, "read")))
 		.orderBy(asc(messages.createdAt));
 
-	return NextResponse.json({ messages: rows });
-}
+	return apiSuccess({ messages: rows });
+});

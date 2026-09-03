@@ -18,6 +18,7 @@ export function createDbMock() {
 	const inserts: { table: unknown; values: unknown }[] = [];
 	const updates: { table: unknown; set: unknown }[] = [];
 	const deletes: { table: unknown }[] = [];
+	const wheres: unknown[] = [];
 
 	const chainMethods = [
 		"from",
@@ -44,16 +45,20 @@ export function createDbMock() {
 	// queued select array; a bare await resolves to `base()`.
 	function makeBuilder(base: () => unknown) {
 		let resolve = base;
-		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 		const b: any = {
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 			then: (onF: any, onR: any) => Promise.resolve(resolve()).then(onF, onR),
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 			catch: (onR: any) => Promise.resolve(resolve()).catch(onR),
-			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 			finally: (onF: any) => Promise.resolve(resolve()).finally(onF),
 		};
 		for (const m of chainMethods) b[m] = vi.fn(() => b);
+		b.where = vi.fn((condition: unknown) => {
+			wheres.push(condition);
+			return b;
+		});
 		b.get = vi.fn(() => {
 			resolve = () => (selectQueue.shift() ?? [])[0];
 			return b;
@@ -65,8 +70,9 @@ export function createDbMock() {
 		return b;
 	}
 
-	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 	const db: any = {
+		batch: vi.fn(async () => undefined),
 		select: vi.fn(() => makeBuilder(() => selectQueue.shift() ?? [])),
 		insert: vi.fn((table: unknown) => {
 			const b = makeBuilder(() => undefined);
@@ -95,6 +101,7 @@ export function createDbMock() {
 		inserts,
 		updates,
 		deletes,
+		wheres,
 		/** Queue the rows the next awaited select() chain should resolve to. */
 		queueSelect(rows: Row[]) {
 			selectQueue.push(rows);

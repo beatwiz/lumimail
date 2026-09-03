@@ -1,77 +1,100 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
-import { getEnv } from "@/lib/cloudflare";
+import { and, eq } from "drizzle-orm";
+import { z } from "zod";
 import { getDb } from "@/db";
 import { messageBodies, messages } from "@/db/schema";
-import { guardUser } from "@/lib/auth/cookies";
+import { withUser } from "@/lib/api/handler";
+import { apiSuccess, parseJsonBody } from "@/lib/api/response";
 import { buildSnippet } from "@/lib/email/parse";
-import type { DraftPayload, DraftRouteParams } from "./types";
 import { selectDraftWithBody } from "./utils";
+import { messageAccessCondition } from "@/lib/auth/mailbox-access";
+import { normalizeAuthoredContent } from "@/lib/email/authored-content";
+import {
+	normalizedReplySourceId,
+	validateDraftAccess,
+	validateReplySourceShape,
+} from "@/lib/drafts/validate";
 
-export async function GET(request: Request, { params }: DraftRouteParams) {
-	const { id } = await params;
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
-	if (errorResponse) return errorResponse;
+// `replyToMessageId` stays unknown so validateDraftInput can answer the
+// historical bare `{ error: "Invalid reply source" }` 400 for bad shapes.
+const draftPayloadSchema = z.object({
+	mailboxId: z.string().nullish(),
+	from: z.string().optional(),
+	to: z.string().optional(),
+	subject: z.string().optional(),
+	text: z.string().optional(),
+	html: z.string().optional(),
+	replyToMessageId: z.unknown().optional(),
+});
+
+export const GET = withUser<{ id: string }>(async ({ env, user, params }) => {
 	const db = getDb(env);
-	const draft = await selectDraftWithBody(db, user.id, id);
+	const draft = await selectDraftWithBody(db, user.id, user.organizationId, params.id);
 
 	if (!draft) {
 		return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 	}
 
-	return NextResponse.json({ draft });
-}
+	return apiSuccess({ draft });
+});
 
-export async function PATCH(request: Request, { params }: DraftRouteParams) {
-	const { id } = await params;
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
+export const PATCH = withUser<{ id: string }>(async ({ request, env, user, params }) => {
+	const { id } = params;
+	const { data: input, errorResponse } = await parseJsonBody(request, draftPayloadSchema);
 	if (errorResponse) return errorResponse;
-	const input = (await request.json()) as DraftPayload;
+	const invalidShape = validateReplySourceShape(input);
+	if (invalidShape) return invalidShape;
 	const db = getDb(env);
-	const [draft] = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+	const [draft] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, id), messageAccessCondition(db, user.id, user.organizationId, "send")))
+		.limit(1);
 
-	if (!draft || draft.userId !== user.id || draft.status !== "draft") {
+	if (!draft || draft.status !== "draft") {
 		return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 	}
+	const denied = await validateDraftAccess(db, user, input);
+	if (denied) return denied;
 
-	const text = input.text ?? "";
-	const html = input.html ?? "";
+	const content = normalizeAuthoredContent(input);
 	await db
 		.update(messages)
 		.set({
 			mailboxId: input.mailboxId ?? null,
+			organizationId: input.mailboxId ? user.organizationId : null,
 			fromAddr: input.from ?? "",
 			toAddr: input.to ?? "",
 			subject: input.subject ?? null,
-			snippet: buildSnippet(text || null, html || null),
+			snippet: buildSnippet(content.text, content.html),
+			replySourceMessageId: normalizedReplySourceId(input),
 		})
 		.where(eq(messages.id, id));
 
 	await db
 		.update(messageBodies)
 		.set({
-			textBody: text || null,
-			htmlBody: html || null,
+			textBody: content.text,
+			htmlBody: content.html,
 		})
 		.where(eq(messageBodies.messageId, id));
 
-	return NextResponse.json({ draft: { id } });
-}
+	return apiSuccess({ draft: { id } });
+});
 
-export async function DELETE(request: Request, { params }: DraftRouteParams) {
-	const { id } = await params;
-	const env = getEnv();
-	const { user, errorResponse } = await guardUser(env, request);
-	if (errorResponse) return errorResponse;
+export const DELETE = withUser<{ id: string }>(async ({ env, user, params }) => {
+	const { id } = params;
 	const db = getDb(env);
-	const [draft] = await db.select().from(messages).where(eq(messages.id, id)).limit(1);
+	const [draft] = await db
+		.select()
+		.from(messages)
+		.where(and(eq(messages.id, id), messageAccessCondition(db, user.id, user.organizationId, "send")))
+		.limit(1);
 
-	if (!draft || draft.userId !== user.id || draft.status !== "draft") {
+	if (!draft || draft.status !== "draft") {
 		return NextResponse.json({ error: "Draft not found" }, { status: 404 });
 	}
 
 	await db.delete(messages).where(eq(messages.id, id));
-	return NextResponse.json({ ok: true });
-}
+	return apiSuccess({ ok: true });
+});

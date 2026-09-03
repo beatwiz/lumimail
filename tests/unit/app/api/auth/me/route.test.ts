@@ -20,11 +20,14 @@ function req() {
 }
 
 describe("GET /api/auth/me", () => {
-	it("returns 401 when unauthenticated", async () => {
+	it("returns 401 in the envelope when unauthenticated", async () => {
 		m.getCurrentUser.mockResolvedValue(null);
 		const res = await GET(req());
 		expect(res.status).toBe(401);
-		expect((await res.json()) as any).toEqual({ error: "Unauthorized" });
+		expect((await res.json()) as any).toEqual({
+			success: false,
+			error: { message: "Unauthorized" },
+		});
 	});
 
 	it("returns the current user and mailbox flag", async () => {
@@ -33,12 +36,19 @@ describe("GET /api/auth/me", () => {
 			email: "a@x.test",
 			name: "Ada",
 			resetEmail: "r@x.test",
+			role: "member",
 		});
 		m.userHasMailboxes.mockResolvedValue(true);
 		const res = await GET(req());
 		expect(res.status).toBe(200);
 		expect((await res.json()) as any).toEqual({
-			user: { id: "u1", email: "a@x.test", name: "Ada", resetEmail: "r@x.test" },
+			user: {
+				id: "u1",
+				email: "a@x.test",
+				name: "Ada",
+				resetEmail: "r@x.test",
+				role: "member",
+			},
 			hasMailboxes: true,
 		});
 	});

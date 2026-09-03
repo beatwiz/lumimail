@@ -10,13 +10,16 @@ const m = vi.hoisted(() => ({
 	getPrimaryDomain: vi.fn(),
 	getPrimaryDomainForOrg: vi.fn(),
 	ensureUserOrg: vi.fn(),
+	hashInvitationToken: vi.fn(),
+	rateLimitIp: vi.fn(),
 }));
 vi.mock("@/lib/cloudflare", () => ({ getEnv: () => ({}) }));
 vi.mock("@/db", () => ({ getDb: () => m.db }));
 vi.mock("@/lib/auth/password", () => ({ hashPassword: m.hashPassword }));
-vi.mock("@/lib/auth/session", () => ({
+// Partial mock: the route also uses the real setSessionCookie helper.
+vi.mock("@/lib/auth/session", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/auth/session")>()),
 	createSession: m.createSession,
-	SESSION_COOKIE: "ep_session",
 }));
 vi.mock("@/lib/ids", () => ({ newId: (p?: string) => (p ? `${p}_1` : "id_1") }));
 vi.mock("@/lib/domains/service", () => ({ addDomainForUser: m.addDomainForUser }));
@@ -28,8 +31,16 @@ vi.mock("@/lib/user", () => ({
 	getPrimaryDomainForOrg: m.getPrimaryDomainForOrg,
 }));
 vi.mock("@/lib/migration/backfill-orgs", () => ({ ensureUserOrg: m.ensureUserOrg }));
+vi.mock("@/lib/auth/invitation", () => ({ hashInvitationToken: m.hashInvitationToken }));
+// Partial mock: enforceRateLimit stays real so the route's 429/503 handling
+// (and the RateLimitUnavailableError instanceof check) run genuine code.
+vi.mock("@/lib/rate-limit", async (importOriginal) => ({
+	...(await importOriginal<typeof import("@/lib/rate-limit")>()),
+	rateLimitIp: m.rateLimitIp,
+}));
 
 import { POST } from "@/app/api/auth/register/route";
+import { RateLimitUnavailableError } from "@/lib/rate-limit";
 
 let mock: DbMock;
 
@@ -43,6 +54,8 @@ beforeEach(() => {
 	m.getPrimaryDomain.mockReset();
 	m.getPrimaryDomainForOrg.mockReset();
 	m.ensureUserOrg.mockReset().mockResolvedValue("org_1");
+	m.hashInvitationToken.mockReset().mockResolvedValue("hashed-token");
+	m.rateLimitIp.mockReset().mockResolvedValue({ allowed: true });
 });
 
 function req(body?: unknown) {
@@ -66,11 +79,40 @@ const primaryBody = {
 };
 
 describe("POST /api/auth/register — invite handling", () => {
+	it("returns 429 before registration work when rate limited", async () => {
+		m.rateLimitIp.mockResolvedValue({ allowed: false });
+		const res = await POST(req(firstRunBody));
+		expect(res.status).toBe(429);
+		expect(m.getPrimaryDomain).not.toHaveBeenCalled();
+	});
+
+	it("fails closed when shared rate-limit storage is unavailable", async () => {
+		m.rateLimitIp.mockRejectedValue(new RateLimitUnavailableError());
+		const res = await POST(req(firstRunBody));
+		expect(res.status).toBe(503);
+		expect(m.getPrimaryDomain).not.toHaveBeenCalled();
+	});
+
+	it("rethrows unexpected limiter errors", async () => {
+		m.rateLimitIp.mockRejectedValue(new Error("unexpected"));
+		await expect(POST(req(firstRunBody))).rejects.toThrow("unexpected");
+	});
+
+	it("returns 400 for a malformed JSON body", async () => {
+		const res = await POST(req());
+		expect(res.status).toBe(400);
+	});
+
 	it("returns 404 when the invite token is invalid/expired", async () => {
 		mock.queueSelect([]); // invite lookup -> none
-		const res = await POST(req({ inviteToken: "bad", ...primaryBody }));
+		const res = await POST(req({
+			inviteToken: "bad",
+			password: primaryBody.password,
+			resetEmail: primaryBody.resetEmail,
+		}));
 		expect(res.status).toBe(404);
 		expect((await res.json()) as any).toMatchObject({ error: { message: "Invite not found or expired" } });
+		expect(m.hashInvitationToken).toHaveBeenCalledWith("bad");
 	});
 });
 
@@ -97,7 +139,7 @@ describe("POST /api/auth/register — first run", () => {
 		});
 		const res = await POST(req(firstRunBody));
 		expect(res.status).toBe(200);
-		expect((await res.json()) as any).toEqual({ token: "sess-token", redirect: "/inbox" });
+		expect((await res.json()) as any).toEqual({ redirect: "/inbox" });
 		expect(res.cookies.get("ep_session")?.value).toBe("sess-token");
 		expect(mock.inserts[0].values).toMatchObject({
 			id: "usr_1",
@@ -125,7 +167,7 @@ describe("POST /api/auth/register — primary domain (non-first-run)", () => {
 	it("returns 400 for an invalid primary-domain body", async () => {
 		m.getPrimaryDomain.mockResolvedValue(primaryDomain);
 		const res = await POST(req({ password: "x" })); // missing username/resetEmail, weak password
-		expect(res.status).toBe(400);
+		expect(res.status).toBe(403);
 	});
 
 	it("returns 409 when the mailbox already exists", async () => {
@@ -133,9 +175,11 @@ describe("POST /api/auth/register — primary domain (non-first-run)", () => {
 		mock.queueSelect([]); // no existing user
 		mock.queueSelect([{ id: "mbx-old" }]); // existing mailbox
 		const res = await POST(req(primaryBody));
-		expect(res.status).toBe(409);
-		expect((await res.json()) as any).toEqual({ error: "Mailbox already exists" });
-		expect(mock.deletes.length).toBeGreaterThan(0);
+		expect(res.status).toBe(403);
+		expect((await res.json()) as any).toMatchObject({
+			error: { message: "Registration requires an invitation" },
+		});
+		expect(mock.deletes).toHaveLength(0);
 	});
 
 	it("returns 502 with the error message when routing fails", async () => {
@@ -144,8 +188,8 @@ describe("POST /api/auth/register — primary domain (non-first-run)", () => {
 		mock.queueSelect([]); // no existing mailbox
 		m.ensureEmailRoutingRuleToWorker.mockRejectedValue(new Error("routing down"));
 		const res = await POST(req(primaryBody));
-		expect(res.status).toBe(502);
-		expect((await res.json()) as any).toEqual({ error: "routing down" });
+		expect(res.status).toBe(403);
+		expect(m.ensureEmailRoutingRuleToWorker).not.toHaveBeenCalled();
 	});
 
 	it("returns 502 with a default message for a non-Error rejection", async () => {
@@ -154,8 +198,8 @@ describe("POST /api/auth/register — primary domain (non-first-run)", () => {
 		mock.queueSelect([]); // no existing mailbox
 		m.ensureEmailRoutingRuleToWorker.mockRejectedValue("nope");
 		const res = await POST(req(primaryBody));
-		expect(res.status).toBe(502);
-		expect((await res.json()) as any).toEqual({ error: "Mailbox setup failed" });
+		expect(res.status).toBe(403);
+		expect(m.ensureEmailRoutingRuleToWorker).not.toHaveBeenCalled();
 	});
 
 	it("registers against the primary domain on success", async () => {
@@ -163,50 +207,132 @@ describe("POST /api/auth/register — primary domain (non-first-run)", () => {
 		mock.queueSelect([]); // no existing user
 		mock.queueSelect([]); // no existing mailbox
 		const res = await POST(req(primaryBody));
-		expect(res.status).toBe(200);
-		expect((await res.json()) as any).toEqual({ token: "sess-token", redirect: "/inbox" });
-		expect(mock.inserts.find((i) => (i.values as { email?: string }).email === "ada@team.test")).toBeTruthy();
-		expect(m.ensureEmailRoutingRuleToWorker).toHaveBeenCalledWith({}, "zone_p", "ada@team.test");
+		expect(res.status).toBe(403);
+		expect(mock.inserts).toHaveLength(0);
+		expect(m.ensureEmailRoutingRuleToWorker).not.toHaveBeenCalled();
 	});
 });
 
 describe("POST /api/auth/register — invite-driven (non-first-run)", () => {
-	it("uses the invite org, adds membership, and consumes the invite", async () => {
+	it("uses the invited email, adds membership, marks the invite accepted, and creates no mailbox", async () => {
 		const invite = {
 			id: "inv_1",
 			organizationId: "org_inv",
+			email: "Teammate@External.test",
 			role: "member",
-			token: "good",
+			token: "hashed-token",
 			expiresAt: new Date(Date.now() + 60_000),
 		};
 		mock.queueSelect([invite]); // invite lookup
-		m.getPrimaryDomainForOrg.mockResolvedValue({ id: "dom_o", hostname: "org.test", zoneId: "zone_o" });
 		mock.queueSelect([]); // no existing user
-		mock.queueSelect([]); // no existing mailbox
-		const res = await POST(req({ inviteToken: "good", ...primaryBody }));
+		mock.queueSelect([invite]); // atomic invite claim
+		const res = await POST(req({
+			inviteToken: "good",
+			password: primaryBody.password,
+			resetEmail: primaryBody.resetEmail,
+			username: "attacker",
+			email: "attacker@example.com",
+		}));
 		expect(res.status).toBe(200);
-		// membership insert + invite delete happened
+		expect(mock.inserts.some((i) =>
+			(i.values as { email?: string }).email === "teammate@external.test"
+		)).toBe(true);
 		expect(mock.inserts.some((i) => (i.values as { role?: string }).role === "member")).toBe(true);
-		expect(mock.deletes.length).toBeGreaterThan(0);
-		// invite path does not call ensureUserOrg
+		expect(mock.deletes).toHaveLength(0);
+		expect(mock.updates[0].set).toMatchObject({ acceptedAt: expect.any(Date) });
+		expect(mock.db.batch).toHaveBeenCalledTimes(1);
 		expect(m.ensureUserOrg).not.toHaveBeenCalled();
+		expect(m.getPrimaryDomainForOrg).not.toHaveBeenCalled();
+		expect(m.ensureEmailRoutingRuleToWorker).not.toHaveBeenCalled();
+		expect(mock.inserts.some((i) =>
+			(i.values as { localPart?: string }).localPart !== undefined
+		)).toBe(false);
 	});
 
-	it("restores the invite when an invited primary-domain mailbox already exists", async () => {
+	it("returns 409 without consuming the invite when its identity is already registered", async () => {
 		const invite = {
 			id: "inv_1",
 			organizationId: "org_inv",
+			email: "existing@external.test",
 			role: "admin",
-			token: "good",
+			token: "hashed-token",
 			expiresAt: new Date(Date.now() + 60_000),
 		};
 		mock.queueSelect([invite]); // invite lookup
-		m.getPrimaryDomainForOrg.mockResolvedValue({ id: "dom_o", hostname: "org.test", zoneId: "zone_o" });
-		mock.queueSelect([]); // no existing user
-		mock.queueSelect([{ id: "mbx-old" }]); // existing mailbox
-		const res = await POST(req({ inviteToken: "good", ...primaryBody }));
+		mock.queueSelect([{ id: "usr_existing" }]); // existing user
+		const res = await POST(req({
+			inviteToken: "good",
+			password: primaryBody.password,
+			resetEmail: primaryBody.resetEmail,
+		}));
 		expect(res.status).toBe(409);
-		// invite re-inserted after rollback
-		expect(mock.inserts.some((i) => (i.values as { token?: string }).token === "good")).toBe(true);
+		expect((await res.json()) as any).toMatchObject({
+			error: { message: "Email already registered" },
+		});
+		expect(mock.deletes).toHaveLength(0);
+	});
+
+	it("returns 400 for an invalid invite registration body", async () => {
+		const invite = {
+			id: "inv_1",
+			organizationId: "org_inv",
+			email: "teammate@external.test",
+			role: "member",
+			expiresAt: new Date(Date.now() + 60_000),
+		};
+		mock.queueSelect([invite]);
+
+		const res = await POST(req({ inviteToken: "good", password: "short" }));
+
+		expect(res.status).toBe(400);
+		expect(mock.inserts).toHaveLength(0);
+	});
+
+	it("rejects a replay when another request wins the invite claim", async () => {
+		const invite = {
+			id: "inv_1",
+			organizationId: "org_inv",
+			email: "teammate@external.test",
+			role: "member",
+			token: "hashed-token",
+			expiresAt: new Date(Date.now() + 60_000),
+		};
+		mock.queueSelect([invite]); // invite lookup
+		mock.queueSelect([]); // no existing user
+		mock.queueSelect([]); // claim lost
+
+		const res = await POST(req({
+			inviteToken: "good",
+			password: primaryBody.password,
+			resetEmail: primaryBody.resetEmail,
+		}));
+
+		expect(res.status).toBe(404);
+		expect(mock.db.batch).not.toHaveBeenCalled();
+	});
+
+	it("restores claimability when account creation fails", async () => {
+		const invite = {
+			id: "inv_1",
+			organizationId: "org_inv",
+			email: "teammate@external.test",
+			role: "member",
+			token: "hashed-token",
+			expiresAt: new Date(Date.now() + 60_000),
+			createdAt: new Date(Date.now() - 60_000),
+		};
+		mock.queueSelect([invite]); // invite lookup
+		mock.queueSelect([]); // no existing user
+		mock.queueSelect([invite]); // claim won
+		mock.db.batch.mockRejectedValueOnce(new Error("D1 unavailable"));
+
+		const res = await POST(req({
+			inviteToken: "good",
+			password: primaryBody.password,
+			resetEmail: primaryBody.resetEmail,
+		}));
+
+		expect(res.status).toBe(503);
+		expect(mock.updates.at(-1)?.set).toEqual({ acceptedAt: null });
 	});
 });

@@ -28,8 +28,7 @@ describe("resolveInboundTargets", () => {
 		mock
 			.queueSelect([activeDomain]) // domain (targets)
 			.queueSelect([]) // alias lookup -> none
-			// resolveInboundAddress re-runs its own lookups:
-			.queueSelect([activeDomain]) // domain
+			// fallback reuses the already-loaded domain (T-42):
 			.queueSelect([]) // routing rules
 			.queueSelect([{ id: "mb_1", userId: "u1", localPart: "a", displayName: "A" }]); // direct mailbox
 
@@ -71,6 +70,42 @@ describe("resolveInboundTargets", () => {
 		]);
 	});
 
+	it("delivers a simple alias to an explicit mailbox on another organization domain", async () => {
+		mock
+			.queueSelect([{ ...activeDomain, organizationId: "org_1" }])
+			.queueSelect([{
+				id: "al_cross",
+				organizationId: "org_1",
+				domainId: "dom_1",
+				localPart: "info",
+				isGroup: false,
+				targetMailboxId: "mb_cross",
+				forwardTo: null,
+			}])
+			.queueSelect([{
+				id: "mb_cross",
+				userId: "u_cross",
+				organizationId: "org_1",
+				domainId: "dom_2",
+				localPart: "admin",
+				hostname: "other.test",
+				displayName: "Other Admin",
+			}]);
+
+		await expect(resolveInboundTargets(db, "info@example.com")).resolves.toEqual([{
+			action: "store",
+			mailbox: {
+				mailboxId: "mb_cross",
+				userId: "u_cross",
+				organizationId: "org_1",
+				domainId: "dom_2",
+				localPart: "admin",
+				hostname: "other.test",
+				displayName: "Other Admin",
+			},
+		}]);
+	});
+
 	it("expands a simple alias forward target", async () => {
 		mock
 			.queueSelect([activeDomain]) // domain
@@ -85,8 +120,7 @@ describe("resolveInboundTargets", () => {
 			.queueSelect([activeDomain]) // domain
 			.queueSelect([{ id: "al_1", domainId: "dom_1", localPart: "x", isGroup: false, targetMailboxId: "mb_gone", forwardTo: null }]) // alias
 			.queueSelect([]) // loadMailboxDecision -> missing
-			// decisions empty -> fallback to resolveInboundAddress
-			.queueSelect([activeDomain]) // domain
+			// decisions empty -> fallback (domain already loaded, T-42)
 			.queueSelect([]) // rules
 			.queueSelect([]); // direct mailbox -> none
 
@@ -99,8 +133,8 @@ describe("resolveInboundTargets", () => {
 			.queueSelect([activeDomain]) // domain
 			.queueSelect([{ id: "al_g", domainId: "dom_1", localPart: "team", isGroup: true, targetMailboxId: null, forwardTo: null }]) // alias
 			.queueSelect([
-				{ aliasId: "al_g", userId: "u1", email: null }, // internal -> mailbox lookup
-				{ aliasId: "al_g", userId: null, email: "ext@other.com" }, // external
+				{ aliasId: "al_g", legacyUserId: "u1", email: null }, // legacy internal -> mailbox lookup
+				{ aliasId: "al_g", legacyUserId: null, email: "ext@other.com" }, // external
 			]) // group members
 			.queueSelect([{ id: "mb_1" }]) // mailbox lookup for u1
 			// expandAliasTargets yields [mailbox mb_1, forward ext@other.com]
@@ -123,11 +157,139 @@ describe("resolveInboundTargets", () => {
 		]);
 	});
 
+	it("fans out explicit group mailbox IDs across domains in one member query", async () => {
+		mock
+			.queueSelect([{ ...activeDomain, organizationId: "org_1" }])
+			.queueSelect([{
+				id: "al_g",
+				organizationId: "org_1",
+				domainId: "dom_1",
+				localPart: "team",
+				isGroup: true,
+				targetMailboxId: null,
+				forwardTo: null,
+			}])
+			.queueSelect([
+				{
+					mailboxId: "mb_1",
+					userId: "u1",
+					organizationId: "org_1",
+					domainId: "dom_1",
+					localPart: "support",
+					hostname: "example.com",
+					displayName: "Support",
+				},
+				{
+					mailboxId: "mb_2",
+					userId: "u2",
+					organizationId: "org_1",
+					domainId: "dom_2",
+					localPart: "sales",
+					hostname: "other.test",
+					displayName: "Sales",
+				},
+			]);
+
+		await expect(resolveInboundTargets(db, "team@example.com")).resolves.toEqual([
+			{
+				action: "store",
+				mailbox: {
+					mailboxId: "mb_1",
+					userId: "u1",
+					organizationId: "org_1",
+					domainId: "dom_1",
+					localPart: "support",
+					hostname: "example.com",
+					displayName: "Support",
+				},
+			},
+			{
+				action: "store",
+				mailbox: {
+					mailboxId: "mb_2",
+					userId: "u2",
+					organizationId: "org_1",
+					domainId: "dom_2",
+					localPart: "sales",
+					hostname: "other.test",
+					displayName: "Sales",
+				},
+			},
+		]);
+		expect(mock.db.select).toHaveBeenCalledTimes(3);
+	});
+
+	it("skips a deleted explicit group mailbox and falls back to ordinary routing", async () => {
+		mock
+			.queueSelect([{ ...activeDomain, organizationId: "org_1" }])
+			.queueSelect([{
+				id: "al_g",
+				organizationId: "org_1",
+				domainId: "dom_1",
+				localPart: "team",
+				isGroup: true,
+				targetMailboxId: null,
+				forwardTo: null,
+			}])
+			.queueSelect([{ memberMailboxId: "mb_deleted", mailboxId: null }])
+			// fallback reuses the already-loaded domain (T-42):
+			.queueSelect([])
+			.queueSelect([]);
+
+		await expect(resolveInboundTargets(db, "team@example.com")).resolves.toEqual([]);
+	});
+
+	it("keeps legacy user-backed group members readable until migration", async () => {
+		mock
+			.queueSelect([{ ...activeDomain, organizationId: "org_1" }])
+			.queueSelect([{
+				id: "al_g",
+				organizationId: "org_1",
+				domainId: "dom_1",
+				localPart: "team",
+				isGroup: true,
+				targetMailboxId: null,
+				forwardTo: null,
+			}])
+			.queueSelect([{ legacyUserId: "u1", email: null }])
+			.queueSelect([{ id: "mb_1" }])
+			.queueSelect([{
+				id: "mb_1",
+				userId: "u1",
+				organizationId: "org_1",
+				domainId: "dom_1",
+				localPart: "support",
+				hostname: "example.com",
+				displayName: null,
+			}]);
+
+		const result = await resolveInboundTargets(db, "team@example.com");
+		expect(result).toHaveLength(1);
+		expect(result[0].mailbox?.mailboxId).toBe("mb_1");
+	});
+
+	it("treats a row that carries a joined userId without a member mailbox id as external", async () => {
+		// Documents the T-42 deletion of the legacy recovery arm
+		// (`?? (!memberMailboxId ? row.userId : null)`): the mailboxes left join is
+		// keyed on `groupMembers.mailboxId`, so when `memberMailboxId` is null the
+		// join cannot have matched and `mailboxes.userId` is necessarily null too.
+		// This row shape is therefore impossible for D1 to produce; if a mock ever
+		// fabricates it, the member is treated as an external address rather than
+		// resurrected as a legacy user-backed member.
+		mock
+			.queueSelect([activeDomain]) // domain
+			.queueSelect([{ id: "al_g", domainId: "dom_1", localPart: "team", isGroup: true, targetMailboxId: null, forwardTo: null }]) // alias
+			.queueSelect([{ memberMailboxId: null, legacyUserId: null, userId: "u_ghost", email: "ghost@other.com" }]); // impossible join output
+
+		const result = await resolveInboundTargets(db, "team@example.com");
+		expect(result).toEqual([{ action: "forward", forwardTo: "ghost@other.com" }]);
+	});
+
 	it("treats an internal group member with no mailbox as external email", async () => {
 		mock
 			.queueSelect([activeDomain]) // domain
 			.queueSelect([{ id: "al_g", domainId: "dom_1", localPart: "team", isGroup: true, targetMailboxId: null, forwardTo: null }]) // alias
-			.queueSelect([{ aliasId: "al_g", userId: "u1", email: "fallback@other.com" }]) // member with userId
+			.queueSelect([{ aliasId: "al_g", legacyUserId: "u1", email: "fallback@other.com" }]) // legacy member
 			.queueSelect([]); // mailbox lookup for u1 -> none, so falls back to row.email
 
 		const result = await resolveInboundTargets(db, "team@example.com");
@@ -139,8 +301,7 @@ describe("resolveInboundTargets", () => {
 			.queueSelect([activeDomain]) // domain
 			.queueSelect([{ id: "al_g", domainId: "dom_1", localPart: "team", isGroup: true, targetMailboxId: null, forwardTo: null }]) // empty group alias
 			.queueSelect([]) // group members -> none, expandAliasTargets -> []
-			// fallback resolveInboundAddress:
-			.queueSelect([activeDomain]) // domain
+			// fallback reuses the already-loaded domain (T-42):
 			.queueSelect([]) // rules
 			.queueSelect([{ id: "mb_d", userId: "ud", localPart: "team", displayName: null }]); // direct mailbox
 
@@ -256,5 +417,86 @@ describe("resolveInboundAddress", () => {
 			.queueSelect([])
 			.queueSelect([]);
 		expect(await resolveInboundAddress(db, "a@example.com")).toBeNull();
+	});
+
+	it("uses exact-address rules before local-part rules and catch-all regardless of priority", async () => {
+		mock
+			.queueSelect([activeDomain])
+			.queueSelect([
+				{ id: "wild", pattern: "*", action: "reject", priority: 100 },
+				{ id: "local", pattern: "admin", action: "reject", priority: 50 },
+				{ id: "exact", pattern: "admin@example.com", action: "store", mailboxId: "mb_exact", priority: 1 },
+			])
+			.queueSelect([{ id: "mb_exact", userId: "u1", localPart: "admin", displayName: null }]);
+
+		expect(await resolveInboundAddress(db, "ADMIN@EXAMPLE.COM")).toMatchObject({
+			action: "store",
+			mailbox: { mailboxId: "mb_exact", domainId: "dom_1" },
+		});
+	});
+
+	it("uses a local-part rule before a higher-priority catch-all", async () => {
+		mock
+			.queueSelect([activeDomain])
+			.queueSelect([
+				{ id: "wild", pattern: "*", action: "reject", priority: 100 },
+				{ id: "local", pattern: "admin", action: "store", mailboxId: "mb_local", priority: 1 },
+			])
+			.queueSelect([{ id: "mb_local", userId: "u1", localPart: "admin", displayName: null }]);
+
+		expect(await resolveInboundAddress(db, "admin@example.com")).toMatchObject({
+			action: "store",
+			mailbox: { mailboxId: "mb_local" },
+		});
+	});
+
+	it("delivers to a direct mailbox before applying catch-all", async () => {
+		mock
+			.queueSelect([activeDomain])
+			.queueSelect([{ id: "wild", pattern: "*", action: "reject", priority: 100 }])
+			.queueSelect([{ id: "mb_direct", userId: "u1", localPart: "support", displayName: "Support" }]);
+
+		expect(await resolveInboundAddress(db, "support@example.com")).toMatchObject({
+			action: "store",
+			mailbox: { mailboxId: "mb_direct" },
+		});
+	});
+
+	it("applies catch-all only after confirming no direct mailbox exists", async () => {
+		mock
+			.queueSelect([activeDomain])
+			.queueSelect([{ id: "wild", pattern: "*", action: "store", mailboxId: "mb_catch", priority: 1 }])
+			.queueSelect([])
+			.queueSelect([{ id: "mb_catch", userId: "owner", localPart: "admin", displayName: null }]);
+
+		expect(await resolveInboundAddress(db, "unknown@example.com")).toMatchObject({
+			action: "store",
+			mailbox: { mailboxId: "mb_catch", userId: "owner" },
+		});
+	});
+
+	it("does not apply another domain's catch-all", async () => {
+		mock
+			.queueSelect([{ ...activeDomain, id: "dom_2", hostname: "second.test" }])
+			.queueSelect([])
+			.queueSelect([]);
+
+		expect(await resolveInboundAddress(db, "unknown@second.test")).toBeNull();
+	});
+
+	it("skips a store rule without a mailbox target and falls back to the direct mailbox", async () => {
+		mock
+			.queueSelect([activeDomain])
+			.queueSelect([{ id: "broken", pattern: "a", action: "store", mailboxId: null, priority: 1 }])
+			.queueSelect([{ id: "mb_direct", userId: "u1", localPart: "a", displayName: null }]);
+		expect(await resolveInboundAddress(db, "a@example.com")).toMatchObject({ mailbox: { mailboxId: "mb_direct" } });
+	});
+
+	it("skips non-catch-all rules after direct mailbox lookup and returns no match", async () => {
+		mock
+			.queueSelect([activeDomain])
+			.queueSelect([{ id: "other", pattern: "other", action: "reject", priority: 1 }])
+			.queueSelect([]);
+		expect(await resolveInboundAddress(db, "unknown@example.com")).toBeNull();
 	});
 });

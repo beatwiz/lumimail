@@ -1,7 +1,9 @@
 # F12 — Multi-User Workspace (Organizations, Invites, Roles)
 
-> Status: In Progress
-> Owner area: `src/app/api/org/*`, `src/lib/auth/org-guard.ts`, `src/app/(admin)/members/`, `src/db/schema/`
+> Status: Partially Shipped
+> Owner area: `src/app/api/org/*`, `src/lib/auth/org-guard.ts`, `src/app/(settings)/(org)/members/`, `src/db/schema/`
+
+Organization membership and invitations do not define mailbox-content access. The least-privilege shared-mailbox follow-on is specified separately in [F47](./F47-mailbox-access-control.md), and identity-bound invitation acceptance is specified in [F49](./F49-identity-bound-organization-invitations.md). Where this historical specification describes organization-wide mailbox visibility, personal message ownership, invited usernames, or automatic invited-user mailboxes, F47/F49 control the desired behavior.
 
 ## 1. Problem & User Job
 
@@ -17,15 +19,15 @@ keeping their own inbox private.
     then an invite is created with a unique token link.
 - As an **invited user**, I can register via the invite link and join the existing org.
   - Given I visit `/register?token=<valid>`, when I complete registration,
-    then I join the inviter's org with the assigned role and get a mailbox.
+    then I join the inviter's org using the invited external email as my login identity and receive no mailbox until an administrator assigns one.
 - As an **org owner**, I can change a member's role or remove them.
   - Given I click a member's role dropdown, when I select a new role,
     then the member's role updates immediately.
   - Given I click "Remove" on a member, when I confirm,
     then the member is removed and can no longer see org resources.
-- As a **member**, I can see shared org mailboxes but only my own messages.
-  - Given I view the mailbox selector, I see all org mailboxes.
-  - Given I view inbox/sent/drafts, I see only my own messages.
+- As a **member**, I can see only mailboxes explicitly assigned to me and the messages stored in those mailboxes.
+  - Given I view the mailbox selector, I see only mailboxes granted through F47 membership.
+  - Given I view inbox/sent/drafts, mailbox-scoped data follows F47 while null-mailbox personal data remains private.
 - As an **admin**, I manage org domains and mailboxes that all members share.
   - Given I add a domain or create a mailbox, it's scoped to the org, not just me.
 
@@ -121,7 +123,7 @@ When `inviteToken` is provided and valid:
 
 ## 6. UI/UX
 
-### Members page — `src/app/(admin)/members/page.tsx`
+### Members page — `src/app/(settings)/(org)/members/page.tsx`
 
 - List of current members: name, email, role badge, joined date
 - "Invite member" button opens dialog
@@ -200,6 +202,23 @@ When `inviteToken` is provided and valid:
 - Q: Can an owner demote themselves? → No — blocked at API level (400).
 
 ## 13. Bug / Change Log
+
+### 2026-07-31 — Document the org-membership dual read behind an accessor (T-41)
+
+Type: Refactor / Documentation (behavior-preserving)
+
+Summary:
+
+- Organization membership is stored twice today: `users.organizationId` is the
+  active-org pointer, while `organizationMembers` is the role truth. The dual
+  read is now encapsulated in the documented `getActiveOrgMembership` accessor
+  in `src/lib/auth/session.ts`, which `getUserFromSession` uses; new code must
+  go through the accessor instead of reading the column directly.
+- A consistency test asserts (and deliberately preserves) current behavior
+  when the two disagree: a pointer at an org with no membership row keeps the
+  user scoped to that org with `role: null`, so role-gated guards deny.
+- Full column retirement (migration + backfill removal) is explicitly
+  out of the tech-debt batch; scheduled after the batch ships.
 
 ### 2026-06-10 — Initial multi-user workspace implementation
 

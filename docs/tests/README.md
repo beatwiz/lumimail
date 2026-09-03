@@ -25,9 +25,11 @@ tests/
 npm run test          # vitest run (no coverage gate, fast loop)
 npm run test:watch    # vitest watch mode
 npm run test:cov      # vitest run --coverage (enforces 100% on included files)
+npm run crap          # regenerate all-source coverage and enforce CRAP <= 30
+npm run crap:report   # full report from the latest all-source CRAP coverage
 npm run typecheck     # tsc --noEmit
 npm run e2e           # playwright test (boots `npm run dev`)
-npm run verify        # typecheck + lint + test:cov
+npm run verify        # typecheck + lint + test:cov + CRAP + bridge tests
 ```
 
 ## Coverage strategy: grow the include list, never lower the threshold
@@ -47,6 +49,20 @@ gate honest while the suite is built out incrementally:
 Never add a file to `include` before it has tests, and never remove a passing
 file from `include` to make the gate pass.
 
+## Change-risk analysis (CRAP)
+
+`npm run crap` first runs the dedicated `vitest.crap.config.ts` coverage pass over
+every executable `src/**/*.ts` and `src/**/*.tsx` file, then combines each
+function's cyclomatic complexity with its attributable statement and branch
+coverage. Untested source is present at zero coverage rather than omitted. This
+all-source report is separate from the incremental 100% gate in `vitest.config.ts`.
+
+The concise command prints threshold violations and fails when a function has a
+CRAP score above 30; use `npm run crap:report` to inspect every scored function.
+Executable source reported as `N/A` is a gate defect to resolve, not an accepted
+skip. Generated reports remain under the ignored `coverage/` directory.
+`npm run verify` includes the all-source concise CRAP gate.
+
 ## What to test where
 
 - **Pure functions / utils / validators** (`src/lib/`, `src/app/utils.ts`,
@@ -65,8 +81,14 @@ file from `include` to make the gate pass.
 
 ## E2E setup
 
-E2E tests boot `npm run dev` (Playwright `webServer`). For flows touching
-Cloudflare APIs (`CF_TOKEN`), either:
+E2E tests use `tests/e2e-server.ts` as Playwright global setup. It reuses a
+healthy server when one already exists; otherwise it starts Next.js, waits for
+the manifest readiness endpoint, and tears down the exact spawned process tree.
+The mocked suite skips OpenNext binding initialization. `npm run e2e:local`
+enables local Wrangler bindings and uses a writable ignored configuration
+directory under `.wrangler/`.
+
+For flows touching Cloudflare APIs (`CF_TOKEN`), either:
 
 - Run against a `.dev.vars` with a real scoped token against a disposable test
   zone, or
@@ -74,6 +96,73 @@ Cloudflare APIs (`CF_TOKEN`), either:
   server) so domain/mailbox E2E tests don't depend on live Cloudflare state.
 
 Document which mode a given E2E test uses in a comment at the top of the file.
+
+## Two E2E suites, and why both exist
+
+```
+tests/
+  e2e/         # Playwright, every API response mocked
+  e2e-local/   # Playwright, real backend and real sessions
+```
+
+`tests/e2e/` mocks every API response. It verifies that the UI renders what it is
+handed, quickly and without any data setup. It cannot verify that the server would
+hand it that — a mock returning `role: "viewer"` proves nothing about who the
+server considers a viewer. Hidden controls are not a security boundary.
+
+`tests/e2e-local/` signs in as real users against a real local database and asserts
+on real authorization. Run it with:
+
+```bash
+npm run e2e:local
+```
+
+That applies every local D1 migration before seeding `scripts/seed-e2e.mjs`. The
+fixture's shape is deliberate:
+
+| Mailbox | Owner | Member | Viewer |
+|---------|-------|--------|--------|
+| `alpha` | manager | — | — |
+| `shared` | manager | responder | viewer |
+| `team` | manager | responder | — |
+| `private` | manager | **no row** | — |
+
+`shared` plus `team` proves unscoped aggregation returns more than one permitted
+mailbox; `alpha` plus `private` prove it excludes more than one forbidden mailbox.
+The viewer on `shared` makes "can read it but still cannot send from it" testable.
+Owner and member labels deliberately overlap a readable message so label ownership
+is tested independently of mailbox access. Do not simplify these rows away.
+
+Sessions are established once per role by `auth.setup.ts` and reused while they
+still resolve. Logging in per test tripped the five-attempt-per-minute limiter,
+which was the limiter working correctly against a bad test pattern.
+
+### Mock every request the shell makes
+
+`authFetch` treats a 401 as a lost session: it clears the token and navigates to
+`/login`. In `tests/e2e/`, a shell request left unmocked therefore tears the page
+down partway through the test, and the failure surfaces wherever the redirect lands
+— a detached element, an aborted navigation, an assertion against `/login`. None of
+those point at the missing mock, and because it races the assertion it looks
+intermittent.
+
+`tests/e2e/shell.ts` mocks the requests every dashboard route makes. Call
+`mockShellNoise(page)` before a spec's own routes, which still take precedence. If
+a mocked test fails in a way that mentions `/login` or a detached element, log
+401 responses first — the cause is almost certainly a request nothing mocked.
+
+### When a run fails with "You are offline"
+
+That page is the PWA's cached offline shell, not an application error, and it means
+the dev server is not answering. It is easy to misread as an authentication failure —
+sign-in appears to hang, and the saved session looks expired.
+
+The usual cause is a dead server that still owns `.next/dev`: the record claims a PID,
+so starting another server is refused, while nothing is actually listening on the
+port. The service worker then answers navigations from cache.
+
+Check with `curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/login` — a
+`000` means nothing is listening. Remove `.next/dev` and start the server again.
 
 ## Definition of "done" for a feature's tests
 

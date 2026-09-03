@@ -2,23 +2,45 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { Check, LogOut, Mail, Settings } from "lucide-react";
+import { Check, Layers, LogOut, Mail, Settings } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
+import { useAuthSession } from "@/components/auth/auth-session-context";
 import { useSelectedMailbox } from "@/components/mailbox-provider";
 import { useMessageCounts } from "@/hooks/use-message-counts";
 import { authFetch, clearClientSessionToken } from "@/lib/auth/client";
+import { isOrganizationAdminRole } from "@/lib/auth/roles";
+import { isAllScopeAvailable } from "@/components/mailbox-scope-utils";
+import { isSettingsPath } from "@/components/settings/settings-nav-utils";
 import { cn } from "@/lib/utils";
 
-export function MailboxSelector() {
+function selectedMailboxLabels(allMailboxes: boolean, selectedMailbox: ReturnType<typeof useSelectedMailbox>["selectedMailbox"], t: ReturnType<typeof useTranslations>) {
+	if (allMailboxes) return { name: t("allMailboxes"), email: t("allDomains"), ariaLabel: t("allMailboxes") };
+	const name = selectedMailbox?.displayName ?? selectedMailbox?.localPart ?? t("allMailboxes");
+	const email = selectedMailbox ? `${selectedMailbox.localPart}@${selectedMailbox.hostname}` : t("allDomains");
+	return { name, email, ariaLabel: `${name} ${email}` };
+}
+
+function visibleCount(count: number, t: ReturnType<typeof useTranslations>) {
+	return count > 99 ? t("countOverflow") : count;
+}
+
+function settingsDescription(canAdministerOrganization: boolean) {
+	return canAdministerOrganization ? "Account and organization settings" : "Profile, mailbox, and integrations";
+}
+
+export function MailboxSelector({ defaultOpen = false }: { defaultOpen?: boolean } = {}) {
 	const t = useTranslations("nav");
-	const { selectedMailbox, setSelectedMailbox, mailboxes, isLoading } =
+	const session = useAuthSession();
+	const canAdministerOrganization = isOrganizationAdminRole(session?.user?.role);
+	const { selectedMailbox, setSelectedMailbox, mailboxes, isLoading, allMailboxes, setAllMailboxes } =
 		useSelectedMailbox();
 	const pathname = usePathname();
 	const router = useRouter();
-	const [open, setOpen] = useState(false);
+	const [open, setOpen] = useState(defaultOpen);
 	const ref = useRef<HTMLDivElement>(null);
 	const { counts } = useMessageCounts(null, open);
+	const allUnread = counts.mailboxes.reduce((sum, mailbox) => sum + mailbox.unread, 0);
 
 	useEffect(() => {
 		function onPointerDown(event: PointerEvent) {
@@ -31,17 +53,8 @@ export function MailboxSelector() {
 
 	if (isLoading) return null;
 
-	const selectedName = selectedMailbox?.displayName ?? selectedMailbox?.localPart ?? t("allMailboxes");
-	const selectedEmail = selectedMailbox
-		? `${selectedMailbox.localPart}@${selectedMailbox.hostname}`
-		: t("allDomains");
-	const adminActive =
-		pathname === "/admin" ||
-		pathname.startsWith("/mailboxes") ||
-		pathname.startsWith("/domains") ||
-		pathname.startsWith("/routing") ||
-		pathname.startsWith("/api-keys") ||
-		pathname.startsWith("/webhooks");
+	const selectedLabels = selectedMailboxLabels(allMailboxes, selectedMailbox, t);
+	const settingsActive = isSettingsPath(pathname);
 
 	async function logout() {
 		await authFetch("/api/auth/logout", { method: "POST", redirectOnUnauthorized: false });
@@ -51,32 +64,65 @@ export function MailboxSelector() {
 	}
 
 	return (
-		<div ref={ref} className="relative">
+		<div ref={ref} className="relative shrink-0">
 			<button
 				type="button"
+				aria-label={selectedLabels.ariaLabel}
+				aria-expanded={open}
+				aria-haspopup="menu"
 				onClick={() => setOpen((value) => !value)}
-				className="flex items-center justify-between gap-3 rounded-full pr-2 pl-4 py-1.5 text-left hover:bg-neutral-200"
+				className="flex items-center justify-between gap-3 rounded-full p-1 text-left hover:bg-surface-subtle sm:py-1.5 sm:pr-2 sm:pl-4"
 			>
 				<div className="flex min-w-0 items-center gap-3">
-					<div className="min-w-0 text-right flex flex-col justify-center">
-						<p className="truncate text-sm font-medium text-neutral-800">{selectedName}</p>
-						<p className="truncate text-[11px] text-neutral-500">{selectedEmail}</p>
+					<div className="hidden min-w-0 text-right flex-col justify-center sm:flex">
+						<p className="truncate text-sm font-medium text-ink">{selectedLabels.name}</p>
+						<p className="truncate text-[11px] text-ink-muted">{selectedLabels.email}</p>
 					</div>
-					<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-blue-600 text-white">
+					<div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-white">
 						<Mail className="h-4 w-4" />
 					</div>
 				</div>
 			</button>
 			{open && (
-				<div className="absolute right-0 top-12 z-50 w-80 overflow-hidden rounded-2xl border border-neutral-200 bg-white py-2 shadow-xl">
+				<div className="absolute right-0 top-12 z-50 w-[min(20rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-border bg-surface-raised py-2 shadow-xl">
 					<div className="px-4 pt-3 pb-2">
-						<p className="text-sm font-medium text-neutral-900">{t("mailboxes")}</p>
-						<p className="text-xs text-neutral-500">{t("chooseMailbox")}</p>
+						<p className="text-sm font-medium text-ink">{t("mailboxes")}</p>
+						<p className="text-xs text-ink-muted">{t("chooseMailbox")}</p>
 					</div>
+					{isAllScopeAvailable(mailboxes.length) && (
+						<button
+							type="button"
+							onClick={() => {
+								setAllMailboxes(true);
+								setOpen(false);
+								router.push("/inbox");
+							}}
+							className={cn(
+								"flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-subtle",
+								!settingsActive && allMailboxes && "bg-accent-muted",
+							)}
+						>
+							<div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent-muted text-accent">
+								<Layers className="h-4 w-4" />
+							</div>
+							<div className="min-w-0 flex-1">
+								<p className="truncate text-sm font-medium text-ink">{t("allMailboxes")}</p>
+								<p className="truncate text-xs text-ink-muted">
+									{t("allMailboxesDesc", { count: mailboxes.length })}
+								</p>
+							</div>
+							{allUnread > 0 && (
+								<span className="rounded-full bg-accent-muted px-2 py-0.5 text-[11px] font-semibold text-accent">
+									{visibleCount(allUnread, t)}
+								</span>
+							)}
+							{!settingsActive && allMailboxes && <Check className="h-4 w-4 text-accent" />}
+						</button>
+					)}
 					{mailboxes.map((mb) => {
 						const email = `${mb.localPart}@${mb.hostname}`;
 						const name = mb.displayName ?? mb.localPart;
-						const active = !adminActive && selectedMailbox?.id === mb.id;
+						const active = !settingsActive && !allMailboxes && selectedMailbox?.id === mb.id;
 						const mailboxCount = counts.mailboxes.find((count) => count.mailboxId === mb.id);
 						const unread = mailboxCount?.unread ?? 0;
 						const inbox = mailboxCount?.inbox ?? 0;
@@ -86,70 +132,73 @@ export function MailboxSelector() {
 								key={mb.id}
 								type="button"
 								onClick={() => {
+									setAllMailboxes(false);
 									setSelectedMailbox(mb);
 									setOpen(false);
 									router.push("/inbox");
 								}}
 								className={cn(
-									"flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-[#f2f6fc]",
-									active && "bg-blue-50",
+									"flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-subtle",
+									active && "bg-accent-muted",
 								)}
 							>
-								<div className="flex h-9 w-9 items-center justify-center rounded-full bg-blue-100 text-blue-700">
+								<div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent-muted text-accent">
 									{name.slice(0, 1).toUpperCase()}
 								</div>
 								<div className="min-w-0 flex-1">
 									<div className="flex items-center gap-2">
-										<p className="truncate text-sm font-medium text-neutral-900">{name}</p>
+										<p className="truncate text-sm font-medium text-ink">{name}</p>
 										{mb.isPrimary && (
-											<span className="rounded-full bg-blue-100 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+											<span className="rounded-full bg-accent-muted px-2 py-0.5 text-[10px] font-medium text-accent">
 												{t("primary")}
 											</span>
 										)}
 									</div>
-									<p className="truncate text-xs text-neutral-500">
+									<p className="truncate text-xs text-ink-muted">
 										{email}
 										{inbox > 0 && ` · ${inbox} ${t("inbox").toLowerCase()}`}
 									</p>
 								</div>
 								{unread > 0 && (
-									<span className="rounded-full bg-blue-100 px-2 py-0.5 text-[11px] font-semibold text-blue-700">
-										{unread > 99 ? t("countOverflow") : unread}
+									<span className="rounded-full bg-accent-muted px-2 py-0.5 text-[11px] font-semibold text-accent">
+										{visibleCount(unread, t)}
 									</span>
 								)}
-								{active && <Check className="h-4 w-4 text-blue-600" />}
+								{active && <Check className="h-4 w-4 text-accent" />}
 							</button>
 						);
 					})}
-					<div className="mt-2 border-t divide-y divide-neutral-100 border-neutral-100 pt-2">
+					<div className="mt-2 border-t divide-y divide-border border-border pt-2">
 						<Link
-							href="/admin"
+							href="/settings"
 							onClick={() => setOpen(false)}
 							className={cn(
-								"flex items-center gap-3 px-4 py-3 text-sm font-medium text-neutral-700 hover:bg-[#f2f6fc]",
-								adminActive && "bg-blue-50",
+								"flex items-center gap-3 px-4 py-3 text-sm font-medium text-ink-muted hover:bg-surface-subtle",
+								settingsActive && "bg-accent-muted",
 							)}
 						>
-							<div className="flex h-9 w-9 items-center justify-center rounded-full bg-neutral-100 text-neutral-700">
+							<div className="flex h-9 w-9 items-center justify-center rounded-full bg-surface-subtle text-ink-muted">
 								<Settings className="h-4 w-4" />
 							</div>
 							<div>
-								<p className="text-sm font-medium text-neutral-900">{t("adminSettings")}</p>
-								<p className="text-xs text-neutral-500">{t("adminSettingsDesc")}</p>
+								<p className="text-sm font-medium text-ink">{t("settings")}</p>
+								<p className="text-xs text-ink-muted">
+									{settingsDescription(canAdministerOrganization)}
+								</p>
 							</div>
-							{adminActive && <Check className="ml-auto h-4 w-4 text-blue-600" />}
+							{settingsActive && <Check className="ml-auto h-4 w-4 text-accent" />}
 						</Link>
 						<button
 							type="button"
 							onClick={logout}
-							className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium text-red-600 hover:bg-red-50"
+							className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium text-danger hover:bg-danger-muted"
 						>
-							<div className="flex h-9 w-9 items-center justify-center rounded-full bg-red-50 text-red-600">
+							<div className="flex h-9 w-9 items-center justify-center rounded-full bg-danger-muted text-danger">
 								<LogOut className="h-4 w-4" />
 							</div>
 							<div>
 								<p className="text-sm font-medium">{t("logOut")}</p>
-								<p className="text-xs text-red-500/80">{t("signOutSession")}</p>
+								<p className="text-xs text-danger/80">{t("signOutSession")}</p>
 							</div>
 						</button>
 					</div>

@@ -1,25 +1,29 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 import { getDb } from "@/db";
 import { messages } from "@/db/schema";
-import { getCurrentUser } from "@/lib/auth/cookies";
-import { getEnv } from "@/lib/cloudflare";
-import type { BulkMessagePayload } from "./types";
+import { withUser } from "@/lib/api/handler";
+import { apiSuccess, parseJsonBody } from "@/lib/api/response";
 import {
 	getReadValueForBulkAction,
 	getStatusForBulkAction,
 	isAllowedBulkMessageAction,
 } from "./utils";
+import { messageAccessCondition } from "@/lib/auth/mailbox-access";
 
-export async function POST(request: Request) {
-	const env = getEnv();
-	const user = await getCurrentUser(env, request);
-	if (!user) {
-		return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-	}
+// Both fields stay loose (nullable ids, free-form action) so falsy ids are
+// still filtered out and an unknown action keeps answering the historical
+// bare `{ error: "Invalid bulk message action" }` 400 below.
+const bulkMessageSchema = z.object({
+	messageIds: z.array(z.string().nullable()).optional(),
+	action: z.string().optional(),
+});
 
-	const payload = (await request.json()) as BulkMessagePayload;
-	const messageIds = payload.messageIds?.filter(Boolean) ?? [];
+export const POST = withUser(async ({ request, env, user }) => {
+	const { data: payload, errorResponse } = await parseJsonBody(request, bulkMessageSchema);
+	if (errorResponse) return errorResponse;
+	const messageIds = (payload.messageIds ?? []).filter((id): id is string => Boolean(id));
 	if (messageIds.length === 0 || !isAllowedBulkMessageAction(payload.action)) {
 		return NextResponse.json({ error: "Invalid bulk message action" }, { status: 400 });
 	}
@@ -40,7 +44,10 @@ export async function POST(request: Request) {
 	await db
 		.update(messages)
 		.set(values)
-		.where(and(eq(messages.userId, user.id), inArray(messages.id, messageIds)));
+		.where(and(
+			messageAccessCondition(db, user.id, user.organizationId, "read"),
+			inArray(messages.id, messageIds),
+		));
 
-	return NextResponse.json({ ok: true });
-}
+	return apiSuccess({ ok: true });
+});

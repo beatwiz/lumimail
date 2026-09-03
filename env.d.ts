@@ -4,6 +4,8 @@ interface CloudflareEnv {
 	BUCKET: R2Bucket;
 	INBOUND_QUEUE: Queue<import("./src/lib/email/inbound").InboundQueueMessage>;
 	OUTBOUND_QUEUE: Queue<import("./src/lib/email/send").OutboundQueueMessage>;
+	EXTERNAL_SYNC_QUEUE: Queue<import("./src/lib/email/external/types").ExternalSyncQueueMessage>;
+	EXTERNAL_SYNC_DLQ_QUEUE: Queue;
 	ASSETS: Fetcher;
 	IMAGES: ImagesBinding;
 	WORKER_SELF_REFERENCE: Fetcher;
@@ -18,4 +20,26 @@ interface CloudflareEnv {
 	RESEND_API_KEY?: string;
 	/** Override the Resend API base URL (defaults to https://api.resend.com). */
 	RESEND_BASE_URL?: string;
+	/** Canonical HTTPS origin used to create credential-bearing links. */
+	PUBLIC_APP_URL?: string;
+	/** JSON keyring used to encrypt external OAuth credentials and cursors. */
+	EXTERNAL_TOKEN_KEYS?: string;
+	GOOGLE_OAUTH_CLIENT_ID?: string;
+	GOOGLE_OAUTH_CLIENT_SECRET?: string;
+	MICROSOFT_OAUTH_CLIENT_ID?: string;
+	MICROSOFT_OAUTH_CLIENT_SECRET?: string;
+	/** Verified sender address used for password recovery messages. */
+	PASSWORD_RESET_FROM?: string;
+	/**
+	 * Set to "true" to let the scheduled sweep delete unreferenced R2 objects.
+	 * Ships unset so the existing backlog is never removed before an operator has
+	 * reviewed the report from `/api/admin/r2-retention` (F63).
+	 */
+	R2_SWEEP_ENABLED?: string;
+	/**
+	 * Set to "true" to enable the dev-only `/api/seed` demo-data route (T-43).
+	 * Fails closed when unset; production builds additionally refuse via the
+	 * NODE_ENV check regardless of this binding.
+	 */
+	SEED_ENABLED?: string;
 }

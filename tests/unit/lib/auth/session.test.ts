@@ -20,13 +20,16 @@ vi.mock("@/lib/ids", () => ({
 }));
 
 import bcrypt from "bcryptjs";
+import type { NextResponse } from "next/server";
 import {
 	SESSION_COOKIE,
 	createSession,
 	deleteSession,
 	generateSessionToken,
+	getActiveOrgMembership,
 	getUserFromSession,
 	hashSessionToken,
+	setSessionCookie,
 	verifySessionToken,
 } from "@/lib/auth/session";
 
@@ -75,6 +78,7 @@ describe("createSession", () => {
 		expect(values.tokenHash).toBe("hashed:sess_id");
 		expect(values.organizationId).toBe("org_1");
 		expect(values.expiresAt).toBeInstanceOf(Date);
+		expect(values.authenticatedAt).toBeInstanceOf(Date);
 		// id was generated without a prefix
 		expect(idCalls).toContain(undefined);
 	});
@@ -139,6 +143,17 @@ describe("getUserFromSession", () => {
 			organizationId: "org_1",
 			role: "admin",
 		});
+		const names = new Set<string>();
+		const seen = new WeakSet<object>();
+		function collectColumnNames(value: unknown): void {
+			if (!value || typeof value !== "object" || seen.has(value)) return;
+			seen.add(value);
+			if ("name" in value && typeof value.name === "string") names.add(value.name);
+			for (const child of Object.values(value)) collectColumnNames(child);
+		}
+		collectColumnNames(mock.wheres.at(-1));
+		expect(names).toContain("user_id");
+		expect(names).toContain("organization_id");
 	});
 
 	it("uses a null role when no membership row exists", async () => {
@@ -153,30 +168,89 @@ describe("getUserFromSession", () => {
 		});
 	});
 
-	it("skips non-matching sessions before finding the match", async () => {
+	it("performs exactly one bcrypt comparison for a matching session", async () => {
 		mock
-			.queueSelect([
-				{ tokenHash: "hashed:nope", userId: "ux" },
-				{ tokenHash: "hashed:tok", userId: "u1" },
-			])
+			.queueSelect([{ tokenHash: "hashed:tok", userId: "u1" }])
 			.queueSelect([{ id: "u1", organizationId: null }]);
-		expect(await getUserFromSession(env, "tok")).toEqual({ id: "u1", organizationId: null });
+
+		await getUserFromSession(env, "tok");
+
+		// The row is found by indexed digest, so cost no longer grows with the
+		// number of active sessions (F66).
+		expect(vi.mocked(bcrypt.compareSync)).toHaveBeenCalledTimes(1);
+	});
+
+	it("performs no bcrypt comparison when the digest matches nothing", async () => {
+		mock.queueSelect([]);
+
+		expect(await getUserFromSession(env, "tok")).toBeNull();
+		expect(vi.mocked(bcrypt.compareSync)).not.toHaveBeenCalled();
+	});
+
+	it("rejects a row whose digest matched but whose hash does not verify", async () => {
+		mock.queueSelect([{ tokenHash: "hashed:other", userId: "u1" }]);
+
+		// Authentication still depends on bcrypt, so the digest alone never admits.
+		expect(await getUserFromSession(env, "tok")).toBeNull();
+		expect(vi.mocked(bcrypt.compareSync)).toHaveBeenCalledTimes(1);
+	});
+});
+
+describe("getActiveOrgMembership", () => {
+	it("returns null for a user with no active-org pointer", async () => {
+		expect(await getActiveOrgMembership(env, { id: "u1", organizationId: null })).toBeNull();
+		expect(mock.db.select).not.toHaveBeenCalled();
+	});
+
+	it("pairs the active-org pointer with the membership row's role", async () => {
+		mock.queueSelect([{ role: "owner" }]);
+		expect(await getActiveOrgMembership(env, { id: "u1", organizationId: "org_1" })).toEqual({
+			organizationId: "org_1",
+			role: "owner",
+		});
+	});
+
+	it("keeps an inconsistent pointer org-scoped but role-less (T-41 consistency)", async () => {
+		// Consistency case: users.organizationId points at an org that has NO
+		// matching organizationMembers row. CURRENT behavior — deliberately
+		// preserved, not fixed, in this batch: the user remains scoped to the
+		// pointed-at org (organizationId is still returned) but with role: null,
+		// so every role-gated guard (org admin/owner) denies. Column retirement
+		// will make the join table the single source of truth post-batch.
+		mock.queueSelect([]);
+		expect(await getActiveOrgMembership(env, { id: "u1", organizationId: "org_orphan" })).toEqual({
+			organizationId: "org_orphan",
+			role: null,
+		});
+	});
+});
+
+describe("setSessionCookie", () => {
+	it("sets the session cookie with the canonical attributes", () => {
+		const set = vi.fn();
+		const response = { cookies: { set } } as unknown as NextResponse;
+
+		setSessionCookie(response, "sess_tok");
+
+		expect(set).toHaveBeenCalledTimes(1);
+		expect(set).toHaveBeenCalledWith(SESSION_COOKIE, "sess_tok", {
+			httpOnly: true,
+			secure: true,
+			sameSite: "lax",
+			path: "/",
+			maxAge: 60 * 60 * 24 * 30,
+		});
 	});
 });
 
 describe("deleteSession", () => {
-	it("deletes the session whose hash matches", async () => {
-		mock.queueSelect([
-			{ id: "s1", tokenHash: "hashed:nope" },
-			{ id: "s2", tokenHash: "hashed:tok" },
-		]);
+	it("deletes by digest without scanning or hashing", async () => {
 		await deleteSession(env, "tok");
-		expect(mock.deletes).toHaveLength(1);
-	});
 
-	it("deletes nothing when no hash matches", async () => {
-		mock.queueSelect([{ id: "s1", tokenHash: "hashed:other" }]);
-		await deleteSession(env, "tok");
-		expect(mock.deletes).toHaveLength(0);
+		// A targeted delete on a unique digest removes the one row if it exists and
+		// nothing otherwise, so it is idempotent and needs no bcrypt.
+		expect(mock.deletes).toHaveLength(1);
+		expect(vi.mocked(bcrypt.compareSync)).not.toHaveBeenCalled();
+		expect(mock.db.select).not.toHaveBeenCalled();
 	});
 });

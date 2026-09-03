@@ -3,7 +3,7 @@ import { cookies } from "next/headers";
 import { SESSION_COOKIE, getUserFromSession } from "@/lib/auth/session";
 import type { User } from "@/db/schema";
 
-function getBearerToken(request?: Request): string | undefined {
+export function getBearerToken(request?: Request): string | undefined {
 	const authorization = request?.headers.get("Authorization");
 	if (!authorization?.startsWith("Bearer ")) return undefined;
 	const token = authorization.slice(7).trim();
@@ -17,15 +17,6 @@ export async function getCurrentUser(env: CloudflareEnv, request?: Request) {
 	const jar = await cookies();
 	const token = jar.get(SESSION_COOKIE)?.value;
 	return getUserFromSession(env, token);
-}
-
-export async function requireUser(
-	env: CloudflareEnv,
-	request?: Request,
-): Promise<User> {
-	const user = await getCurrentUser(env, request);
-	if (!user) throw new Error("Unauthorized");
-	return user;
 }
 
 type GuardResult = { user: User; errorResponse: null } | { user: null; errorResponse: NextResponse };

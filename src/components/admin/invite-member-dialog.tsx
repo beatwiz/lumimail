@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Copy, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,20 +12,26 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Select } from "@/components/ui/select";
 
 type Props = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onInviteCreated: () => void;
+  initialInviteLink?: string | null;
+  initialDeliveryStatus?: "not_sent" | "sending" | "sent" | "failed" | null;
 };
 
-export function InviteMemberDialog({ open, onOpenChange, onInviteCreated }: Props) {
+export function InviteMemberDialog({ open, onOpenChange, onInviteCreated, initialInviteLink = null, initialDeliveryStatus = null }: Props) {
+  const t = useTranslations("admin");
+  const tCommon = useTranslations("common");
   const [email, setEmail] = useState("");
   const [role, setRole] = useState<"admin" | "member">("member");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [inviteLink, setInviteLink] = useState<string | null>(null);
+  const [inviteLink, setInviteLink] = useState<string | null>(initialInviteLink);
   const [copied, setCopied] = useState(false);
+  const [deliveryStatus, setDeliveryStatus] = useState<"not_sent" | "sending" | "sent" | "failed" | null>(initialDeliveryStatus);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,16 +44,17 @@ export function InviteMemberDialog({ open, onOpenChange, onInviteCreated }: Prop
     });
     const json = (await res.json()) as {
       success: boolean;
-      data?: { token: string };
+      data?: { invite: { token: string; deliveryStatus: "not_sent" | "sending" | "sent" | "failed" } };
       error?: { message: string };
     };
     setLoading(false);
     if (!res.ok || !json.success) {
-      setError(typeof json.error?.message === "string" ? json.error.message : "Failed to create invite");
+      setError(typeof json.error?.message === "string" ? json.error.message : t("createInviteFailed"));
       return;
     }
-    const link = `${window.location.origin}/register?token=${json.data!.token}`;
+    const link = `${window.location.origin}/register?token=${json.data!.invite.token}`;
     setInviteLink(link);
+    setDeliveryStatus(json.data!.invite.deliveryStatus);
     onInviteCreated();
   }
 
@@ -63,66 +71,70 @@ export function InviteMemberDialog({ open, onOpenChange, onInviteCreated }: Prop
     setError(null);
     setInviteLink(null);
     setCopied(false);
+    setDeliveryStatus(null);
     onOpenChange(false);
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent>
         <DialogHeader>
-          <DialogTitle>Invite member</DialogTitle>
+          <DialogTitle>{t("inviteMember")}</DialogTitle>
         </DialogHeader>
         {inviteLink ? (
           <div className="space-y-4">
-            <p className="text-sm text-neutral-600">
-              Share this link with {email}. They will join as {role}.
+            <p className={`rounded-md px-3 py-2 text-sm font-medium ${deliveryStatus === "sent" ? "bg-success-muted text-success" : "bg-warning-muted text-warning"}`}>
+              {deliveryStatus === "sent" ? "Invitation sent" : deliveryStatus === "failed" ? "Email delivery failed — share the link below" : "Delivery is unconfirmed — share the link below"}
+            </p>
+            <p className="text-sm text-ink-muted">
+              {t("inviteShareLink", { email, role })}
             </p>
             <div className="flex items-center gap-2">
               <Input value={inviteLink} readOnly className="flex-1" />
               <Button type="button" variant="outline" size="sm" onClick={copyLink}>
                 {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                {copied ? "Copied" : "Copy"}
+                {copied ? tCommon("copied") : tCommon("copy")}
               </Button>
             </div>
             <Button type="button" variant="outline" className="w-full" onClick={handleClose}>
-              Close
+              {tCommon("close")}
             </Button>
           </div>
         ) : (
           <form onSubmit={onSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="invite-email">Email address</Label>
+              <Label htmlFor="invite-email">{t("inviteEmailLabel")}</Label>
               <Input
                 id="invite-email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="colleague@example.com"
+                placeholder={t("inviteEmailPlaceholder")}
                 required
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="invite-role">Role</Label>
-              <select
+              <Label htmlFor="invite-role">{t("inviteRoleLabel")}</Label>
+              <Select
                 id="invite-role"
                 value={role}
                 onChange={(e) => setRole(e.target.value as "admin" | "member")}
-                className="h-9 w-full rounded-md border border-[var(--border-strong)] bg-[var(--surface-raised)] px-3 text-sm"
+                
               >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-              </select>
-              <p className="text-xs text-neutral-500">
-                Admins can manage members. Members can only use mail.
+                <option value="member">{t("roleMember")}</option>
+                <option value="admin">{t("roleAdmin")}</option>
+              </Select>
+              <p className="text-xs text-ink-muted">
+                {t("inviteRoleHint")}
               </p>
             </div>
             {error && (
-              <p className="rounded-lg border border-red-100 bg-red-50 px-3 py-2 text-sm text-red-700">
+              <p className="rounded-lg border border-danger/30 bg-danger-muted px-3 py-2 text-sm text-danger">
                 {error}
               </p>
             )}
             <Button type="submit" className="w-full" disabled={loading || !email.trim()}>
-              {loading ? "Creating..." : "Create invite link"}
+              {loading ? "Sending…" : "Send invitation"}
             </Button>
           </form>
         )}

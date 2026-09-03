@@ -1,16 +1,12 @@
-import { eq, and, gt } from "drizzle-orm";
-import { getEnv } from "@/lib/cloudflare";
+import { eq } from "drizzle-orm";
 import { getDb } from "@/db";
-import { users, organizationMembers, orgInvites, organizations } from "@/db/schema";
-import { guardOrgAdmin } from "@/lib/auth/org-guard";
-import { newId } from "@/lib/ids";
+import { users, organizationMembers } from "@/db/schema";
+import { withOrgAdmin } from "@/lib/api/handler";
 import { apiSuccess, apiError } from "@/lib/api/response";
+import { organizationInviteSchema } from "@/lib/validators";
+import { createOrganizationInvitation, listOrganizationInvitations } from "@/lib/organization-invitations";
 
-export async function GET(request: Request) {
-  const env = getEnv();
-  const { orgUser, errorResponse } = await guardOrgAdmin(env, request);
-  if (errorResponse) return errorResponse;
-
+export const GET = withOrgAdmin(async ({ env, user }) => {
   const db = getDb(env);
   const members = await db
     .select({
@@ -23,89 +19,38 @@ export async function GET(request: Request) {
     })
     .from(organizationMembers)
     .innerJoin(users, eq(organizationMembers.userId, users.id))
-    .where(eq(organizationMembers.organizationId, orgUser.organizationId as string));
+    .where(eq(organizationMembers.organizationId, user.organizationId));
 
-  const invites = await db
-    .select({
-      id: orgInvites.id,
-      email: orgInvites.email,
-      role: orgInvites.role,
-      token: orgInvites.token,
-      expiresAt: orgInvites.expiresAt,
-      createdAt: orgInvites.createdAt,
-    })
-    .from(orgInvites)
-    .where(
-      and(
-        eq(orgInvites.organizationId, orgUser.organizationId as string),
-        gt(orgInvites.expiresAt, new Date()),
-      ),
-    );
+  const invites = await listOrganizationInvitations(env, user.organizationId);
 
   return apiSuccess({ members, invites });
-}
+});
 
-export async function POST(request: Request) {
-  const env = getEnv();
-  const { orgUser, errorResponse } = await guardOrgAdmin(env, request);
-  if (errorResponse) return errorResponse;
+export const POST = withOrgAdmin(async ({ request, env, user }) => {
+  const parsed = organizationInviteSchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) return apiError("Invalid invitation", 400);
+  const { email: inviteEmail, role } = parsed.data;
 
-  const body = await request.json() as Record<string, unknown>;
-  const inviteEmail = typeof body.email === "string" ? body.email.trim().toLowerCase() : null;
-  const role = body.role === "admin" || body.role === "member" ? body.role : "member";
-
-  if (!inviteEmail) return apiError("Email is required", 400);
-
-  const db = getDb(env);
-
-  const [existingMember] = await db
-    .select({ id: organizationMembers.id })
-    .from(organizationMembers)
-    .innerJoin(users, eq(organizationMembers.userId, users.id))
-    .where(
-      and(
-        eq(organizationMembers.organizationId, orgUser.organizationId as string),
-        eq(users.email, inviteEmail),
-      ),
-    )
-    .limit(1);
-
-  if (existingMember) return apiError("Already a member", 409);
-
-  const [existingInvite] = await db
-    .select({ id: orgInvites.id })
-    .from(orgInvites)
-    .where(
-      and(
-        eq(orgInvites.organizationId, orgUser.organizationId as string),
-        eq(orgInvites.email, inviteEmail),
-        gt(orgInvites.expiresAt, new Date()),
-      ),
-    )
-    .limit(1);
-
-  const token = newId("tok");
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + 7);
-
-  if (existingInvite) {
-    await db
-      .update(orgInvites)
-      .set({ role, token, expiresAt })
-      .where(eq(orgInvites.id, existingInvite.id));
-
-    return apiSuccess({ invite: { id: existingInvite.id, token } });
+  let result: Awaited<ReturnType<typeof createOrganizationInvitation>>;
+  try {
+    result = await createOrganizationInvitation(env, {
+      organizationId: user.organizationId,
+      email: inviteEmail,
+      role,
+    });
+  } catch {
+    console.error(JSON.stringify({ message: "organization invitation creation failed" }));
+    return apiError("Invitation service temporarily unavailable", 503);
   }
-
-  const inviteId = newId("inv");
-  await db.insert(orgInvites).values({
-    id: inviteId,
-    organizationId: orgUser.organizationId as string,
-    email: inviteEmail,
-    role,
-    token,
-    expiresAt,
-  });
-
-  return apiSuccess({ invite: { id: inviteId, token } });
-}
+  switch (result.status) {
+    case "already-member": return apiError("Already a member", 409);
+    case "email-registered": return apiError("Email already registered", 409);
+    case "rate-limited": return apiError("Please wait before sending another invitation", 429);
+    case "unavailable": return apiError("Invitation service temporarily unavailable", 503);
+    case "created": return apiSuccess({ invite: {
+      id: result.inviteId,
+      token: result.token,
+      deliveryStatus: result.deliveryStatus,
+    } });
+  }
+});

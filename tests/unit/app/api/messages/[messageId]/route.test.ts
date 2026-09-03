@@ -6,7 +6,7 @@ const m = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/cloudflare", () => ({ getEnv: () => ({}) }));
 vi.mock("@/lib/auth/cookies", () => ({ getCurrentUser: m.getCurrentUser }));
-vi.mock("@/lib/email/inbound", () => ({ getMessageWithBody: m.getMessageWithBody }));
+vi.mock("@/lib/messages/queries", () => ({ getMessageWithBody: m.getMessageWithBody }));
 
 import { GET } from "@/app/api/messages/[messageId]/route";
 
@@ -29,18 +29,21 @@ describe("GET /api/messages/[messageId]", () => {
 	});
 
 	it("returns 404 when the message is not found (cross-tenant denial)", async () => {
-		m.getCurrentUser.mockResolvedValue({ id: "u1" });
+		m.getCurrentUser.mockResolvedValue({ id: "u1", organizationId: "o1" });
 		m.getMessageWithBody.mockResolvedValue(null);
 		const res = await get();
 		expect(res.status).toBe(404);
-		expect(m.getMessageWithBody).toHaveBeenCalledWith({}, "u1", "m1");
+		expect(m.getMessageWithBody).toHaveBeenCalledWith({}, "u1", "o1", "m1");
 	});
 
 	it("returns the message with body", async () => {
-		m.getCurrentUser.mockResolvedValue({ id: "u1" });
+		m.getCurrentUser.mockResolvedValue({ id: "u1", organizationId: "o1" });
 		m.getMessageWithBody.mockResolvedValue({ id: "m1", textBody: "hi" });
 		const res = await get();
 		expect(res.status).toBe(200);
-		expect((await res.json()) as any).toEqual({ id: "m1", textBody: "hi" });
+		expect((await res.json()) as any).toEqual({
+			success: true,
+			data: { id: "m1", textBody: "hi" },
+		});
 	});
 });

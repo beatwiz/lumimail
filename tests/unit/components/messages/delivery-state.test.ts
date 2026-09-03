@@ -1,0 +1,56 @@
+import { describe, expect, it } from "vitest";
+import { getMessageQueryParams } from "@/hooks/utils";
+import { getMessageBadge } from "@/components/messages/utils";
+import {
+	canRecoverMessage,
+	getMessagesRefetchInterval,
+	SENT_DELIVERY_REFRESH_INTERVAL_MS,
+} from "@/components/messages/message-folder-utils";
+import type { Message } from "@/hooks/types";
+
+const baseMessage = {
+	id: "msg_1",
+	userId: "u1",
+	mailboxId: "mb_1",
+	direction: "outbound",
+	providerMessageId: null,
+	fromAddr: "a@example.com",
+	toAddr: "b@example.com",
+	subject: "Hello",
+	snippet: "Body",
+	status: "queued",
+	read: true,
+	starred: false,
+	threadId: null,
+	createdAt: "2026-07-24T00:00:00.000Z",
+} satisfies Message;
+
+describe("outbound delivery state UI", () => {
+	it("requests queued, sent, and failed rows for the Sent folder", () => {
+		const params = getMessageQueryParams("sent", "mb_1");
+		expect(params.get("direction")).toBe("outbound");
+		expect(params.get("status")).toBe("queued,sent,failed");
+	});
+
+	it.each(["queued", "sent", "failed"] as const)("shows %s as the Sent-row badge", (status) => {
+		expect(getMessageBadge({ ...baseMessage, status }, "sent")).toBe(status);
+	});
+
+	it("offers recovery only for a failed Sent message a send-capable user owns", () => {
+		expect(canRecoverMessage("sent", "failed", true)).toBe(true);
+		// viewer capability must not see a send affordance (F48)
+		expect(canRecoverMessage("sent", "failed", false)).toBe(false);
+		expect(canRecoverMessage("sent", "queued", true)).toBe(false);
+		expect(canRecoverMessage("sent", "sent", true)).toBe(false);
+		expect(canRecoverMessage("inbox", "failed", true)).toBe(false);
+	});
+
+	it("polls the Sent page only while queued work is present", () => {
+		expect(getMessagesRefetchInterval("sent", ["sent", "queued"])).toBe(
+			SENT_DELIVERY_REFRESH_INTERVAL_MS,
+		);
+		expect(getMessagesRefetchInterval("sent", ["sent", "failed"])).toBe(false);
+		expect(getMessagesRefetchInterval("sent", [])).toBe(false);
+		expect(getMessagesRefetchInterval("inbox", ["queued"])).toBe(false);
+	});
+});

@@ -2,6 +2,8 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	"name": "lumimail",
 	"main": "./worker.ts",
+	// Required by F81 so a signed version can be smoke-tested before traffic promotion.
+	"preview_urls": true,
 	"compatibility_date": "2026-05-20",
 	"compatibility_flags": [
 		"nodejs_compat",
@@ -20,22 +22,55 @@
 			"service": "lumimail",
 		},
 	],
+	// `vars` are stored in plain text and echoed by `wrangler deploy`, so no
+	// credential belongs here. Set these as secrets instead:
+	//   wrangler secret put CF_TOKEN          // Cloudflare API token
+	//   wrangler secret put RESEND_API_KEY    // only when MAIL_PROVIDER=resend
+	//   wrangler secret put VAPID_PUBLIC_KEY  // environment-specific Web Push key
+	//   wrangler secret put VAPID_PRIVATE_KEY // environment-specific Web Push key
+	//   wrangler secret put VAPID_SUBJECT     // mailto: or HTTPS operator contact
+	//   wrangler secret put EXTERNAL_TOKEN_KEYS       // versioned AES-GCM keyring JSON
+	//   wrangler secret put GOOGLE_OAUTH_CLIENT_ID
+	//   wrangler secret put GOOGLE_OAUTH_CLIENT_SECRET
+	//   wrangler secret put MICROSOFT_OAUTH_CLIENT_ID
+	//   wrangler secret put MICROSOFT_OAUTH_CLIENT_SECRET
 	"vars": {
-		"CF_TOKEN": "cf-token",
 		"CF_ACCOUNT_ID": "cf-account-id",
+		// Name of the Worker that Email Routing rules target. Must match "name"
+		// above, or provisioned routing rules will point at a Worker that does
+		// not exist.
+		"CF_EMAIL_WORKER_NAME": "lumimail",
 		// Outbound provider: "cloudflare" (default, verified recipients only) or
 		// "resend" (arbitrary recipients). For "resend", set RESEND_API_KEY via
 		// `wrangler secret put RESEND_API_KEY` and keep the send_email binding below.
 		"MAIL_PROVIDER": "cloudflare",
+		// Canonical HTTPS origin and a sender on an Email Sending-enabled domain.
+		"PUBLIC_APP_URL": "https://mail.example.com",
+		"PASSWORD_RESET_FROM": "noreply@example.com",
+		// Set to "true" to let the hourly sweep delete R2 objects that are both
+		// unreferenced in D1 and older than the retention age (F63). Leave unset
+		// on a new deployment until `GET /api/admin/r2-retention` has been read,
+		// so an existing backlog is never removed before anyone has seen it.
+		// "R2_SWEEP_ENABLED": "true",
+		// Set to "true" to enable the dev-only /api/seed demo-data route (used by
+		// `npm run db:seed` against `next dev`). The route fails closed when this
+		// is unset, and deployed production builds refuse seeding via NODE_ENV
+		// regardless. Enable it only for local development (here or in .dev.vars);
+		// leave it unset for any deployed environment.
+		// "SEED_ENABLED": "true",
 	},
 	"observability": {
 		"enabled": true,
+	},
+	"triggers": {
+		"crons": [
+			"* * * * *",
+		],
 	},
 	"upload_source_maps": true,
 	"send_email": [
 		{
 			"name": "EMAIL",
-			"remote": true,
 		},
 	],
 	"d1_databases": [
@@ -44,6 +79,12 @@
 			"database_name": "lumimail",
 			"database_id": "your-d1-db-id",
 			"migrations_dir": "drizzle/migrations",
+		},
+	],
+	"kv_namespaces": [
+		{
+			"binding": "OAUTH_KV",
+			"id": "your-production-oauth-kv-id",
 		},
 	],
 	"r2_buckets": [
@@ -62,6 +103,27 @@
 				"binding": "OUTBOUND_QUEUE",
 				"queue": "lumimail-outbound",
 			},
+			{
+				// Metrics-only use by the queue-health checker.
+				"binding": "OUTBOUND_DLQ_QUEUE",
+				"queue": "lumimail-outbound-dlq",
+			},
+			{
+				"binding": "PUSH_QUEUE",
+				"queue": "lumimail-push",
+			},
+			{
+				"binding": "PUSH_DLQ_QUEUE",
+				"queue": "lumimail-push-dlq",
+			},
+			{
+				"binding": "EXTERNAL_SYNC_QUEUE",
+				"queue": "lumimail-external-sync",
+			},
+			{
+				"binding": "EXTERNAL_SYNC_DLQ_QUEUE",
+				"queue": "lumimail-external-sync-dlq",
+			},
 		],
 		"consumers": [
 			{
@@ -73,7 +135,110 @@
 				"queue": "lumimail-outbound",
 				"max_batch_size": 5,
 				"max_retries": 3,
+				"dead_letter_queue": "lumimail-outbound-dlq",
+			},
+			{
+				"queue": "lumimail-outbound-dlq",
+				"max_batch_size": 5,
+				"max_retries": 3,
+			},
+			{
+				"queue": "lumimail-push",
+				"max_batch_size": 10,
+				"max_retries": 3,
+				"dead_letter_queue": "lumimail-push-dlq",
+			},
+			{
+				"queue": "lumimail-push-dlq",
+				"max_batch_size": 10,
+				"max_retries": 1,
+			},
+			{
+				"queue": "lumimail-external-sync",
+				"max_batch_size": 5,
+				"max_retries": 3,
+				"dead_letter_queue": "lumimail-external-sync-dlq",
+			},
+			{
+				"queue": "lumimail-external-sync-dlq",
+				"max_batch_size": 5,
+				"max_retries": 1,
 			},
 		],
 	},
+	// Staging (F67). Deploy with: wrangler deploy --env staging
+	//
+	// Every binding is redeclared because Wrangler replaces binding arrays per
+	// environment rather than merging them - an omitted array would inherit the
+	// production resource, which is exactly the accident this environment exists to
+	// prevent. Production stays the unflagged default.
+	//
+	// CF_ACCOUNT_ID and the staging zone token are supplied separately; the token
+	// MUST be scoped to the staging zone only, or this environment can rewrite
+	// production Email Routing.
+	"env": {
+		"staging": {
+			"name": "lumimail-staging",
+			// Never inherit or reassign the production custom domain.
+			"routes": [],
+			"vars": {
+				"CF_ACCOUNT_ID": "caddde404ba5d0324c315dc5cf143696",
+				"CF_EMAIL_WORKER_NAME": "lumimail-staging",
+				"MAIL_PROVIDER": "cloudflare",
+				// Replace with the deployed workers.dev origin after first deploy.
+				"PUBLIC_APP_URL": "https://lumimail-staging.your-workers-subdomain.workers.dev",
+				"PASSWORD_RESET_FROM": "noreply@STAGING_DOMAIN"
+				// R2_SWEEP_ENABLED deliberately unset, as in production: never enable
+				// a destructive sweep before its report has been read.
+			},
+			"observability": { "enabled": true },
+			"triggers": { "crons": ["* * * * *"] },
+			"send_email": [{ "name": "EMAIL" }],
+			"services": [
+				{ "binding": "WORKER_SELF_REFERENCE", "service": "lumimail-staging" }
+			],
+			"assets": { "binding": "ASSETS", "directory": ".open-next/assets" },
+			"images": { "binding": "IMAGES" },
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "lumimail-staging",
+					"database_id": "STAGING_D1_ID",
+					"migrations_dir": "drizzle/migrations"
+				}
+			],
+			"kv_namespaces": [
+				{
+					"binding": "OAUTH_KV",
+					"id": "your-staging-oauth-kv-id",
+				},
+			],
+			"r2_buckets": [{ "binding": "BUCKET", "bucket_name": "lumimail-raw-staging" }],
+			"queues": {
+				"producers": [
+					{ "binding": "INBOUND_QUEUE", "queue": "lumimail-inbound-staging" },
+					{ "binding": "OUTBOUND_QUEUE", "queue": "lumimail-outbound-staging" },
+					{ "binding": "OUTBOUND_DLQ_QUEUE", "queue": "lumimail-outbound-dlq-staging" },
+					{ "binding": "PUSH_QUEUE", "queue": "lumimail-push-staging" },
+					{ "binding": "PUSH_DLQ_QUEUE", "queue": "lumimail-push-dlq-staging" },
+					{ "binding": "EXTERNAL_SYNC_QUEUE", "queue": "lumimail-external-sync-staging" },
+					{ "binding": "EXTERNAL_SYNC_DLQ_QUEUE", "queue": "lumimail-external-sync-dlq-staging" }
+				],
+				"consumers": [
+					{ "queue": "lumimail-inbound-staging", "max_batch_size": 5, "max_retries": 3 },
+					{
+						"queue": "lumimail-outbound-staging",
+						"max_batch_size": 5,
+						"max_retries": 3,
+						"dead_letter_queue": "lumimail-outbound-dlq-staging"
+					},
+					{ "queue": "lumimail-outbound-dlq-staging", "max_batch_size": 5, "max_retries": 3 },
+					{ "queue": "lumimail-push-staging", "max_batch_size": 10, "max_retries": 3, "dead_letter_queue": "lumimail-push-dlq-staging" },
+					{ "queue": "lumimail-push-dlq-staging", "max_batch_size": 10, "max_retries": 1 },
+					{ "queue": "lumimail-external-sync-staging", "max_batch_size": 5, "max_retries": 3, "dead_letter_queue": "lumimail-external-sync-dlq-staging" },
+					{ "queue": "lumimail-external-sync-dlq-staging", "max_batch_size": 5, "max_retries": 1 }
+				]
+			}
+		}
+	}
 }

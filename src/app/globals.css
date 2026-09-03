@@ -1,37 +1,95 @@
 @import "tailwindcss";
 
-/* ── Design tokens: light mode ─────────────────────────────── */
+/* ── Design tokens: light mode (default) ───────────────────── */
 :root {
-	--surface: #fafaf8;
+	color-scheme: light;
+	--surface: #f6f8fb;
 	--surface-raised: #ffffff;
-	--surface-subtle: #f4f4f0;
-	--ink: #1a1a18;
-	--ink-muted: #6b6b65;
-	--ink-faint: #9a9a92;
-	--border: #e6e6e0;
-	--border-strong: #d4d4ce;
-	--accent: #2563eb;
-	--accent-muted: #dbeafe;
-	--danger: #dc2626;
-	--success: #16a34a;
+	--surface-subtle: #eef2f6;
+	--ink: #0d1524;
+	--ink-muted: #5a6b82;
+	--ink-faint: #718096;
+	--border: #e2e8f0;
+	--border-strong: #cbd5e1;
+	--accent: #1f4e66;
+	--accent-muted: #d9e7ec;
+	--accent-ink: #ffffff;
+	--brand-signal: #e06a3b;
+	--brand-signal-muted: #fce8de;
+	--brand-signal-ink: #0d1524;
+	--danger: #b42318;
+	--danger-muted: #fee4e2;
+	--success: #067647;
+	--success-muted: #ecfdf3;
+	--warning: #7a4b00;
+	--warning-muted: #fff8e1;
+	--info: #6941c6;
+	--info-muted: #f4f3ff;
+	--surface-inverse: #0d1524;
+	--ink-inverse: #ffffff;
 }
 
-/* Dark mode — system preference only, no manual toggle */
+/* ── Dark palette ───────────────────────────────────────────
+   Applied when the OS prefers dark AND the user hasn't chosen a
+   theme (`:root:not([data-theme])`), or when they explicitly pick
+   dark (`:root[data-theme="dark"]`). A manual "light" choice keeps
+   the light `:root` values above. Kept in sync between both selectors. */
 @media (prefers-color-scheme: dark) {
-	:root {
-		--surface: #111110;
-		--surface-raised: #1c1c1a;
-		--surface-subtle: #181816;
-		--ink: #f0f0ee;
-		--ink-muted: #91918a;
-		--ink-faint: #505050;
-		--border: #2e2e2a;
-		--border-strong: #3e3e3a;
-		--accent: #3b82f6;
-		--accent-muted: #1e3a5f;
-		--danger: #ef4444;
-		--success: #22c55e;
+	:root:not([data-theme]) {
+		color-scheme: dark;
+		--surface: #090e17;
+		--surface-raised: #121c2d;
+		--surface-subtle: #172337;
+		--ink: #f1f5f9;
+		--ink-muted: #94a3b8;
+		--ink-faint: #7d8ca1;
+		--border: #1e2e45;
+		--border-strong: #31445f;
+		--accent: #74c0d4;
+		--accent-muted: #173b4a;
+		--accent-ink: #090e17;
+		--brand-signal: #f07b4f;
+		--brand-signal-muted: #4a2a20;
+		--brand-signal-ink: #090e17;
+		--danger: #ff7b72;
+		--danger-muted: #3b1c1c;
+		--success: #4ade80;
+		--success-muted: #123523;
+		--warning: #fbbf24;
+		--warning-muted: #3b2b0b;
+		--info: #c4b5fd;
+		--info-muted: #2d2454;
+		--surface-inverse: #f1f5f9;
+		--ink-inverse: #090e17;
 	}
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--surface: #090e17;
+	--surface-raised: #121c2d;
+	--surface-subtle: #172337;
+	--ink: #f1f5f9;
+	--ink-muted: #94a3b8;
+	--ink-faint: #7d8ca1;
+	--border: #1e2e45;
+	--border-strong: #31445f;
+	--accent: #74c0d4;
+	--accent-muted: #173b4a;
+	--accent-ink: #090e17;
+	--brand-signal: #f07b4f;
+	--brand-signal-muted: #4a2a20;
+	--brand-signal-ink: #090e17;
+	--danger: #ff7b72;
+	--danger-muted: #3b1c1c;
+	--success: #4ade80;
+	--success-muted: #123523;
+	--warning: #fbbf24;
+	--warning-muted: #3b2b0b;
+	--info: #c4b5fd;
+	--info-muted: #2d2454;
+	--surface-inverse: #f1f5f9;
+	--ink-inverse: #090e17;
 }
 
 /* ── Tailwind v4 theme ──────────────────────────────────────── */
@@ -46,9 +104,22 @@
 	--color-border-strong: var(--border-strong);
 	--color-accent: var(--accent);
 	--color-accent-muted: var(--accent-muted);
+	--color-accent-ink: var(--accent-ink);
+	--color-brand-signal: var(--brand-signal);
+	--color-brand-signal-muted: var(--brand-signal-muted);
+	--color-brand-signal-ink: var(--brand-signal-ink);
 	--color-danger: var(--danger);
+	--color-danger-muted: var(--danger-muted);
 	--color-success: var(--success);
-	--font-sans: var(--font-geist-sans);
+	--color-success-muted: var(--success-muted);
+	--color-warning: var(--warning);
+	--color-warning-muted: var(--warning-muted);
+	--color-info: var(--info);
+	--color-info-muted: var(--info-muted);
+	--color-surface-inverse: var(--surface-inverse);
+	--color-ink-inverse: var(--ink-inverse);
+	--font-sans: var(--font-body);
+	--font-display: var(--font-picket-display);
 	--font-mono: var(--font-geist-mono);
 }
 
@@ -56,7 +127,7 @@
 body {
 	background: var(--surface);
 	color: var(--ink);
-	font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI",
+	font-family: var(--font-body), -apple-system, BlinkMacSystemFont, "Segoe UI",
 		Roboto, sans-serif;
 	line-height: 1.6;
 	-webkit-font-smoothing: antialiased;
@@ -83,33 +154,125 @@ body {
 	transition-property: none;
 }
 
-/* ── shadcn/ui overrides ────────────────────────────────────── */
-[data-slot="card"] {
-	border-radius: 6px;
-	border: 1px solid var(--border);
-	box-shadow: none;
+h1,
+h2,
+h3 {
+	font-family: var(--font-picket-display), var(--font-body), -apple-system, BlinkMacSystemFont, "Segoe UI",
+		Roboto, sans-serif;
+	letter-spacing: -0.02em;
 }
 
-[data-slot="dialog-content"] {
-	border-radius: 8px;
-	border: 1px solid var(--border);
-	box-shadow: none;
+/* ── Constrained email composer ─────────────────────────────── */
+.tiptap {
+	min-height: 100%;
+	white-space: pre-wrap;
 }
 
-[data-slot="input"] {
-	height: 36px;
-	border-radius: 6px;
+.tiptap p,
+.tiptap h1,
+.tiptap h2,
+.tiptap blockquote,
+.tiptap ul,
+.tiptap ol {
+	margin-block: 0 0.75rem;
+}
+
+.tiptap h1 {
+	font-size: 1.5rem;
+	font-weight: 700;
+}
+
+.tiptap h2 {
+	font-size: 1.25rem;
+	font-weight: 700;
+}
+
+.tiptap ul {
+	list-style: disc;
+	padding-inline-start: 1.5rem;
+}
+
+.tiptap ol {
+	list-style: decimal;
+	padding-inline-start: 1.5rem;
+}
+
+.tiptap blockquote {
+	border-inline-start: 3px solid var(--border-strong);
+	color: var(--ink-muted);
+	padding-inline-start: 0.75rem;
+}
+
+.tiptap a {
+	color: var(--accent);
+	text-decoration: underline;
+}
+
+.tiptap pre,
+.email-body pre {
+	overflow-x: auto;
+	border-radius: 0.375rem;
+	background: var(--surface-subtle);
+	padding: 0.75rem;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.tiptap code,
+.email-body code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.tiptap table,
+.email-body table {
+	width: 100%;
+	border-collapse: collapse;
+	margin-block: 0 0.75rem;
+}
+
+.tiptap th,
+.tiptap td,
+.email-body th,
+.email-body td {
 	border: 1px solid var(--border-strong);
-	background: var(--surface-raised);
-	padding-left: 12px;
-	padding-right: 12px;
+	padding: 0.375rem 0.5rem;
+	text-align: start;
+	vertical-align: top;
 }
 
-[data-slot="input"]::placeholder {
-	color: var(--ink-faint);
+.tiptap th,
+.email-body th {
+	background: var(--surface-subtle);
+	font-weight: 700;
 }
 
-[data-slot="button"] {
-	border-radius: 6px;
-	font-weight: 500;
+.tiptap img,
+.email-body img {
+	max-width: 100%;
+	height: auto;
 }
+
+/* Sanitized received-message HTML cannot supply its own styles. */
+.email-body h1 {
+	font-size: 2rem;
+	font-weight: 700;
+	line-height: 1.2;
+	margin-block: 0 0.67em;
+}
+
+.email-body h2 {
+	font-size: 1.5rem;
+	font-weight: 700;
+	line-height: 1.25;
+	margin-block: 0 0.83em;
+}
+
+/* ── Component geometry ─────────────────────────────────────────
+   Deliberately absent. This file previously carried a block of
+   `[data-slot="card"|"dialog-content"|"input"|"button"]` rules, but no
+   component in the codebase sets `data-slot`, so none of them ever
+   matched anything. The same values were separately expressed in
+   `src/components/ui/*` as utility classes, which is why most of them
+   appeared to be working — and where the two disagreed, the CSS lost
+   silently: it asked for a 6px button radius while the component shipped
+   12px. The primitives are the single source of truth for geometry; see
+   docs/specs/F68-ui-geometry-consistency.md. */

@@ -8,10 +8,11 @@ vi.mock("@/lib/ids", () => ({ newId: vi.fn(() => "dom_new") }));
 
 vi.mock("@/lib/cloudflare-api", () => ({
 	disableEmailRouting: vi.fn(),
+	ensureSendingDomain: vi.fn(),
+	findSendingDomain: vi.fn(),
 	getEmailRoutingDns: vi.fn(),
 	getEmailRoutingSettings: vi.fn(),
 	getSendingSubdomainDns: vi.fn(),
-	deleteSendingSubdomain: vi.fn(),
 }));
 
 vi.mock("@/lib/domains/cloudflare-cleanup", () => ({
@@ -24,17 +25,20 @@ vi.mock("@/lib/domains/provision", () => ({
 
 import {
 	addDomainForUser,
+	DomainAlreadyRegisteredError,
 	getDomainDns,
 	getDomainForUser,
 	listUserDomains,
 	removeDomainForUser,
+	reconcileDomainSending,
 } from "@/lib/domains/service";
 import {
 	disableEmailRouting,
+	ensureSendingDomain,
+	findSendingDomain,
 	getEmailRoutingDns,
 	getEmailRoutingSettings,
 	getSendingSubdomainDns,
-	deleteSendingSubdomain,
 } from "@/lib/cloudflare-api";
 import { deleteEmailRoutingRulesForDomain } from "@/lib/domains/cloudflare-cleanup";
 import { provisionDomainOnCloudflare } from "@/lib/domains/provision";
@@ -48,7 +52,8 @@ const routingSettingsMock = vi.mocked(getEmailRoutingSettings);
 const sendingDnsMock = vi.mocked(getSendingSubdomainDns);
 const cleanupMock = vi.mocked(deleteEmailRoutingRulesForDomain);
 const disableRoutingMock = vi.mocked(disableEmailRouting);
-const deleteSubMock = vi.mocked(deleteSendingSubdomain);
+const ensureSendingMock = vi.mocked(ensureSendingDomain);
+const findSendingMock = vi.mocked(findSendingDomain);
 
 function defaultDnsMocks() {
 	routingDnsMock.mockResolvedValue({ records: [{ id: "rec" } as never], missing: [] });
@@ -80,13 +85,13 @@ describe("addDomainForUser", () => {
 		routingStatus: "ready",
 	};
 
-	it("throws when the domain belongs to a different organization", async () => {
+	it("throws the typed conflict error when the domain belongs to a different organization", async () => {
 		provisionMock.mockResolvedValue(baseProvisioned);
 		mock.queueSelect([{ id: "dom_x", organizationId: "other-org", hostname: "mail.example.com" }]);
 
-		await expect(addDomainForUser(env, "u1", "org1", "mail.example.com")).rejects.toThrow(
-			"Domain is already registered",
-		);
+		const failure = addDomainForUser(env, "u1", "org1", "mail.example.com");
+		await expect(failure).rejects.toBeInstanceOf(DomainAlreadyRegisteredError);
+		await expect(failure).rejects.toThrow("Domain is already registered");
 	});
 
 	it("inserts a new domain (active status) when none exists and reads it back with DNS", async () => {
@@ -95,7 +100,15 @@ describe("addDomainForUser", () => {
 		// existing lookup -> none; read-back -> the row
 		mock
 			.queueSelect([])
-			.queueSelect([{ id: "dom_new", hostname: "mail.example.com", zoneId: "z1", sendingSubdomainTag: "tag1" }]);
+			.queueSelect([
+				{
+					id: "dom_new",
+					hostname: "mail.example.com",
+					zoneId: "z1",
+					sendingSubdomainTag: "tag1",
+					sendingEnabled: true,
+				},
+			]);
 
 		const result = await addDomainForUser(env, "u1", "org1", "Mail.Example.com");
 
@@ -115,7 +128,7 @@ describe("addDomainForUser", () => {
 		});
 		expect(result.domain).toMatchObject({ id: "dom_new" });
 		expect(result.dns.routing.status).toBe("ready");
-		expect(result.dns.sending).toEqual([{ id: "send" }]);
+		expect(result.dns.sending).toEqual({ enabled: true, records: [{ id: "send" }] });
 	});
 
 	it("updates an existing domain of the same org and sets pending status with null routingStatus", async () => {
@@ -131,7 +144,15 @@ describe("addDomainForUser", () => {
 		// existing lookup -> same org; read-back -> updated row (no sending tag)
 		mock
 			.queueSelect([{ id: "dom_existing", organizationId: "org1", hostname: "mail.example.com" }])
-			.queueSelect([{ id: "dom_existing", hostname: "mail.example.com", zoneId: "z1", sendingSubdomainTag: null }]);
+			.queueSelect([
+				{
+					id: "dom_existing",
+					hostname: "mail.example.com",
+					zoneId: "z1",
+					sendingSubdomainTag: null,
+					sendingEnabled: false,
+				},
+			]);
 
 		const result = await addDomainForUser(env, "u1", "org1", "mail.example.com");
 
@@ -148,7 +169,7 @@ describe("addDomainForUser", () => {
 		expect(result.domain).toMatchObject({ id: "dom_existing" });
 		// no sending tag => sending stays empty, getSendingSubdomainDns not called
 		expect(sendingDnsMock).not.toHaveBeenCalled();
-		expect(result.dns.sending).toEqual([]);
+		expect(result.dns.sending).toEqual({ enabled: false, records: [] });
 	});
 
 	it("treats sending-only enablement as active status", async () => {
@@ -174,12 +195,13 @@ describe("getDomainDns", () => {
 		const dns = await getDomainDns(env, {
 			zoneId: "z1",
 			sendingSubdomainTag: "tag1",
+			sendingEnabled: true,
 		} as never);
 
 		expect(sendingDnsMock).toHaveBeenCalledWith(env, "z1", "tag1");
 		expect(dns).toEqual({
 			routing: { records: [{ id: "rec" }], missing: [], status: "ready" },
-			sending: [{ id: "send" }],
+			sending: { enabled: true, records: [{ id: "send" }] },
 		});
 	});
 
@@ -187,11 +209,96 @@ describe("getDomainDns", () => {
 		routingDnsMock.mockResolvedValue({ records: [], missing: [{ id: "m" } as never] });
 		routingSettingsMock.mockResolvedValue({ status: "pending" });
 
-		const dns = await getDomainDns(env, { zoneId: "z1", sendingSubdomainTag: null } as never);
+		const dns = await getDomainDns(env, {
+			zoneId: "z1",
+			sendingSubdomainTag: null,
+			sendingEnabled: false,
+		} as never);
 
 		expect(sendingDnsMock).not.toHaveBeenCalled();
-		expect(dns.sending).toEqual([]);
+		expect(dns.sending).toEqual({ enabled: false, records: [] });
 		expect(dns.routing.missing).toEqual([{ id: "m" }]);
+	});
+});
+
+describe("reconcileDomainSending", () => {
+	const domain = {
+		id: "dom_1",
+		organizationId: "org1",
+		hostname: "example.com",
+		zoneId: "z1",
+		routingEnabled: true,
+		sendingEnabled: false,
+		sendingSubdomainTag: null,
+		status: "active",
+	};
+
+	it("verify persists an exact enabled provider domain and its DNS", async () => {
+		findSendingMock.mockResolvedValue({ tag: "tag-apex", name: "example.com", enabled: true });
+		defaultDnsMocks();
+
+		const result = await reconcileDomainSending(env, domain as never, "verify");
+
+		expect(findSendingMock).toHaveBeenCalledWith(env, "z1", "example.com");
+		expect(ensureSendingMock).not.toHaveBeenCalled();
+		expect(mock.updates[0].set).toMatchObject({
+			sendingEnabled: true,
+			sendingSubdomainTag: "tag-apex",
+			status: "active",
+		});
+		expect(result.domain).toMatchObject({ sendingEnabled: true, sendingSubdomainTag: "tag-apex" });
+		expect(result.dns.sending).toEqual({ enabled: true, records: [{ id: "send" }] });
+	});
+
+	it("verify clears stale readiness when no exact provider domain exists", async () => {
+		findSendingMock.mockResolvedValue(null);
+		routingDnsMock.mockResolvedValue({ records: [], missing: [] });
+		routingSettingsMock.mockResolvedValue({ status: "ready" });
+
+		const result = await reconcileDomainSending(
+			env,
+			{ ...domain, routingEnabled: false, sendingEnabled: true, sendingSubdomainTag: "stale" } as never,
+			"verify",
+		);
+
+		expect(mock.updates[0].set).toMatchObject({
+			sendingEnabled: false,
+			sendingSubdomainTag: null,
+			status: "pending",
+		});
+		expect(sendingDnsMock).not.toHaveBeenCalled();
+		expect(result.dns.sending).toEqual({ enabled: false, records: [] });
+	});
+
+	it("enable explicitly ensures provider onboarding", async () => {
+		ensureSendingMock.mockResolvedValue({ tag: "tag-new", name: "example.com", enabled: false });
+		routingDnsMock.mockResolvedValue({ records: [], missing: [] });
+		routingSettingsMock.mockResolvedValue({ status: "ready" });
+		sendingDnsMock.mockResolvedValue([{ type: "TXT" }]);
+
+		const result = await reconcileDomainSending(env, domain as never, "enable");
+
+		expect(ensureSendingMock).toHaveBeenCalledWith(env, "z1", "example.com");
+		expect(findSendingMock).not.toHaveBeenCalled();
+		expect(result.domain).toMatchObject({ sendingEnabled: false, sendingSubdomainTag: "tag-new" });
+		expect(result.dns.sending).toEqual({ enabled: false, records: [{ type: "TXT" }] });
+	});
+
+	it("does not mutate cached state when Cloudflare verification fails", async () => {
+		findSendingMock.mockRejectedValue(new Error("provider unavailable"));
+
+		await expect(reconcileDomainSending(env, domain as never, "verify")).rejects.toThrow(
+			"provider unavailable",
+		);
+		expect(mock.updates).toHaveLength(0);
+	});
+
+	it("rejects a legacy domain without organization ownership before provider access", async () => {
+		await expect(
+			reconcileDomainSending(env, { ...domain, organizationId: null } as never, "verify"),
+		).rejects.toThrow("Domain organization is required");
+		expect(findSendingMock).not.toHaveBeenCalled();
+		expect(ensureSendingMock).not.toHaveBeenCalled();
 	});
 });
 
@@ -201,7 +308,7 @@ describe("removeDomainForUser", () => {
 		await expect(removeDomainForUser(env, "org1", "dom_1")).rejects.toThrow("Domain not found");
 	});
 
-	it("runs full cleanup when routing and sending are enabled", async () => {
+	it("cleans up routing but preserves provider sending onboarding with unknown provenance", async () => {
 		mock.queueSelect([
 			{ id: "dom_1", zoneId: "z1", hostname: "mail.example.com", routingEnabled: true, sendingSubdomainTag: "tag1" },
 		]);
@@ -210,7 +317,6 @@ describe("removeDomainForUser", () => {
 
 		expect(cleanupMock).toHaveBeenCalledWith(env, "z1", "mail.example.com");
 		expect(disableRoutingMock).toHaveBeenCalledWith(env, "z1");
-		expect(deleteSubMock).toHaveBeenCalledWith(env, "z1", "tag1");
 		expect(mock.deletes).toHaveLength(1);
 	});
 
@@ -223,15 +329,13 @@ describe("removeDomainForUser", () => {
 
 		expect(cleanupMock).toHaveBeenCalled();
 		expect(disableRoutingMock).not.toHaveBeenCalled();
-		expect(deleteSubMock).not.toHaveBeenCalled();
 		expect(mock.deletes).toHaveLength(1);
 	});
 
-	it("swallows errors from each cleanup step and still deletes the row", async () => {
+	it("swallows routing cleanup errors and still deletes the row", async () => {
 		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 		cleanupMock.mockRejectedValue(new Error("cleanup boom"));
 		disableRoutingMock.mockRejectedValue(new Error("disable boom"));
-		deleteSubMock.mockRejectedValue(new Error("sub boom"));
 
 		mock.queueSelect([
 			{ id: "dom_1", zoneId: "z1", hostname: "mail.example.com", routingEnabled: true, sendingSubdomainTag: "tag1" },
@@ -241,7 +345,6 @@ describe("removeDomainForUser", () => {
 
 		expect(warn).toHaveBeenCalledWith("deleteEmailRoutingRulesForDomain", expect.any(Error));
 		expect(warn).toHaveBeenCalledWith("disableEmailRouting", expect.any(Error));
-		expect(warn).toHaveBeenCalledWith("deleteSendingSubdomain", expect.any(Error));
 		expect(mock.deletes).toHaveLength(1);
 		warn.mockRestore();
 	});

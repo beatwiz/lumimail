@@ -1,9 +1,12 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState } from "react";
+import { useTranslations } from "next-intl";
 import { Plus, Tag, X } from "lucide-react";
-import { authFetch } from "@/lib/auth/client";
+import { apiJson } from "@/lib/api/client-response";
+import { labelKeys } from "@/lib/query-keys";
 import { Button } from "@/components/ui/button";
+import { ListSection } from "@/components/ui/list-section";
 
 type Label = {
 	id: string;
@@ -26,34 +29,30 @@ const PRESET_COLORS = [
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 async function fetchLabels(): Promise<Label[]> {
-	const res = await authFetch("/api/labels");
-	const json = (await res.json()) as { success: boolean; data?: Label[] };
-	return json.data ?? [];
+	// Tolerates the legacy `{ labels: [] }` shape some clients still mock.
+	const data = await apiJson.get<unknown>("/api/labels");
+	return Array.isArray(data) ? (data as Label[]) : [];
 }
 
 export default function LabelsPage() {
+	const t = useTranslations("labels");
+	const tCommon = useTranslations("common");
 	const queryClient = useQueryClient();
 	const [name, setName] = useState("");
 	const [color, setColor] = useState(PRESET_COLORS[0]);
 	const [formError, setFormError] = useState<string | null>(null);
 
 	const { data: labels = [], isLoading } = useQuery({
-		queryKey: ["labels"],
+		queryKey: labelKeys.all,
 		queryFn: fetchLabels,
 	});
 
 	const createMutation = useMutation({
 		mutationFn: async () => {
-			const res = await authFetch("/api/labels", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ name: name.trim(), color }),
-			});
-			const json = (await res.json()) as { success: boolean; error?: string };
-			if (!res.ok) throw new Error(json.error ?? "Failed to create label");
+			await apiJson.post<Label>("/api/labels", { name: name.trim(), color });
 		},
 		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: ["labels"] });
+			void queryClient.invalidateQueries({ queryKey: labelKeys.all });
 			setName("");
 			setColor(PRESET_COLORS[0]);
 			setFormError(null);
@@ -65,34 +64,34 @@ export default function LabelsPage() {
 
 	const deleteMutation = useMutation({
 		mutationFn: async (id: string) => {
-			await authFetch(`/api/labels/${id}`, { method: "DELETE" });
+			await apiJson.delete<{ id: string }>(`/api/labels/${id}`);
 		},
 		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: ["labels"] });
+			void queryClient.invalidateQueries({ queryKey: labelKeys.all });
 		},
 	});
 
 	function handleSubmit(e: React.FormEvent) {
 		e.preventDefault();
 		if (!name.trim()) {
-			setFormError("Name is required");
+			setFormError(t("nameRequired"));
 			return;
 		}
 		createMutation.mutate();
 	}
 
 	return (
-		<div className="space-y-8">
+		<div className="space-y-8 px-4 py-6 sm:px-12 sm:py-8">
 			<div>
-				<h2 className="text-xl font-semibold text-neutral-900">Labels</h2>
-				<p className="text-sm text-neutral-500">Organise your messages with custom labels.</p>
+				<h2 className="text-xl font-semibold text-ink">{t("title")}</h2>
+				<p className="text-sm text-ink-muted">{t("desc")}</p>
 			</div>
 
-			<form onSubmit={handleSubmit} className="rounded-lg border border-neutral-200 bg-white p-4 space-y-4">
-				<h3 className="text-sm font-medium text-neutral-700">New label</h3>
+			<form onSubmit={handleSubmit} className="rounded-lg border border-border bg-surface-raised p-4 space-y-4">
+				<h3 className="text-sm font-medium text-ink-muted">{t("newLabel")}</h3>
 
 				{formError && (
-					<p className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm text-red-700">{formError}</p>
+					<p className="rounded-lg border border-danger/30 bg-danger-muted px-4 py-3 text-sm text-danger">{formError}</p>
 				)}
 
 				<div className="flex items-center gap-3">
@@ -100,17 +99,17 @@ export default function LabelsPage() {
 						type="text"
 						value={name}
 						onChange={(e) => setName(e.target.value)}
-						placeholder="Label name"
-						className="h-9 flex-1 rounded-md border border-neutral-200 bg-neutral-50 px-3 text-sm text-neutral-900 placeholder:text-neutral-400 focus:outline-none focus:ring-2 focus:ring-neutral-300"
+						placeholder={t("namePlaceholder")}
+						className="h-9 flex-1 rounded-md border border-border bg-surface-subtle px-3 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-border-strong"
 					/>
 					<Button type="submit" disabled={createMutation.isPending} className="gap-2">
 						<Plus className="h-4 w-4" />
-						Create
+						{tCommon("create")}
 					</Button>
 				</div>
 
 				<div className="flex items-center gap-2">
-					<span className="text-xs text-neutral-500">Color:</span>
+					<span className="text-xs text-ink-muted">{t("colorLabel")}</span>
 					{PRESET_COLORS.map((c) => (
 						<button
 							key={c}
@@ -119,47 +118,46 @@ export default function LabelsPage() {
 							className="h-6 w-6 rounded-full border-2 transition-transform hover:scale-110"
 							style={{
 								backgroundColor: c,
-								borderColor: color === c ? "#1a1a1a" : "transparent",
+								borderColor: color === c ? "var(--ink)" : "transparent",
 							}}
 						/>
 					))}
 				</div>
 			</form>
 
-			{isLoading ? (
-				<p className="text-sm text-neutral-500">Loading...</p>
-			) : labels.length === 0 ? (
-				<div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-neutral-200 py-12 text-center">
-					<Tag className="mb-3 h-8 w-8 text-neutral-300" />
-					<p className="text-sm text-neutral-500">No labels yet. Create one above.</p>
-				</div>
-			) : (
+			<ListSection
+				loading={isLoading}
+				loadingLabel={tCommon("loading")}
+				empty={labels.length === 0}
+				emptyLabel={t("empty")}
+				emptyIcon={Tag}
+			>
 				<div className="space-y-2">
 					{labels.map((label) => (
 						<div
 							key={label.id}
-							className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white px-4 py-3"
+							className="flex items-center justify-between rounded-lg border border-border bg-surface-raised px-4 py-3"
 						>
 							<div className="flex items-center gap-3">
 								<span
 									className="h-3 w-3 rounded-full flex-shrink-0"
 									style={{ backgroundColor: label.color }}
 								/>
-								<span className="text-sm font-medium text-neutral-900">{label.name}</span>
+								<span className="text-sm font-medium text-ink">{label.name}</span>
 							</div>
 							<button
 								type="button"
 								onClick={() => deleteMutation.mutate(label.id)}
 								disabled={deleteMutation.isPending}
-								className="text-neutral-400 hover:text-red-600"
-								title="Delete label"
+								className="text-ink-faint hover:text-danger"
+								title={t("deleteLabel")}
 							>
 								<X className="h-4 w-4" />
 							</button>
 						</div>
 					))}
 				</div>
-			)}
+			</ListSection>
 		</div>
 	);
 }
